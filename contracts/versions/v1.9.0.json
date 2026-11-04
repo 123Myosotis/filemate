@@ -1,6 +1,20 @@
 {
   "contract_version": "v1.9.0",
   "published_at": "2026-10-21T00:00:00Z",
+  "word_office": {
+    "tool": "word_office",
+    "tiers": [
+      "L0",
+      "L1",
+      "L2",
+      "L3"
+    ],
+    "v1_scope": [
+      "L0",
+      "L1"
+    ],
+    "note": "Word 编辑业务线；接入层共享、执行层独立（不注册 capabilities.py）。"
+  },
   "min_acceptable_version": "v1.1.0",
   "compat_window_until_version": "v1.8.0",
   "priority_higher_wins": true,
