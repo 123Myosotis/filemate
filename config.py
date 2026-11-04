@@ -23,19 +23,20 @@ def save_config(data: dict):
 
 
 def get_api_key() -> str:
-    """快捷读取智谱 API Key；兼容旧字段 deepseek_api_key。"""
+    """读取聊天模型 API Key（兼容旧字段 zhipu_api_key / deepseek_api_key）。"""
     data = load_config()
-    return (data.get("zhipu_api_key")
-            or data.get("api_key")
+    return (data.get("api_key")
+            or data.get("zhipu_api_key")
             or data.get("deepseek_api_key")
             or "")
 
 
 def set_api_key(key: str):
-    """写入/更新智谱 API Key，同时保留配置文件中已有的其他字段"""
+    """写入/更新聊天模型 API Key，同时保留配置文件中已有的其他字段"""
     data = load_config()
-    data["zhipu_api_key"] = key
+    data["api_key"] = key
     # 清理旧字段，避免两套 Key 混淆
+    data.pop("zhipu_api_key", None)
     data.pop("deepseek_api_key", None)
     save_config(data)
 

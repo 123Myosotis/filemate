@@ -1,7 +1,0 @@
-{
-  "zhipu_api_key": "",
-  "params": {
-    "api.base_url": "https://api.deepseek.com/v1",
-    "api.model": "deepseek-chat"
-  }
-}

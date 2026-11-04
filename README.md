@@ -22,11 +22,13 @@ pip install -r requirements.txt
 
 ## 配置
 
-复制 `config.example.json` 为 `config.json`，填入你的 API Key：
+**推荐：启动后在「设置 → 聊天模型设置」里填 Base URL / Model / API Key**，会写入本地 `config.json`（已被 `.gitignore` 忽略，不会上传）。
+
+也可以手动在项目根建 `config.json`：
 
 ```json
 {
-  "zhipu_api_key": "你的 Key",
+  "api_key": "你的 Key",
   "params": {
     "api.base_url": "https://api.deepseek.com/v1",
     "api.model": "deepseek-chat"
@@ -34,7 +36,7 @@ pip install -r requirements.txt
 }
 ```
 
-`config.json` 已被 `.gitignore` 忽略，**不会**上传。
+> 旧字段 `zhipu_api_key` / `deepseek_api_key` 仍兼容，新代码统一写 `api_key`。
 
 ## 运行
 
