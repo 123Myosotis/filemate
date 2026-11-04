@@ -1,0 +1,14 @@
+{
+  "schema_version": "d3-summary-1",
+  "contract_version": "v1.1.0",
+  "contract_hash": "be43693f36327277418482038e313bef624d800dac28a756ef2cd014ec57eb45",
+  "triage": "simple",
+  "fired_signals": [],
+  "primary_table": "t",
+  "ops_present": ["project"],
+  "row_count_out": 2,
+  "column_count_out": 1,
+  "sample_ref": {"sample_coords": ["row:5"]},
+  "evidence_path": "evidence/v1.1.0/a&b.json",
+  "human_text": "ampersand path"
+}

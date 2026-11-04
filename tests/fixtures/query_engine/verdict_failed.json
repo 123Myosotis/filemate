@@ -1,0 +1,5 @@
+{
+  "verdict": "review_failed",
+  "failed_standards": ["std7_reconciliation"],
+  "note": "B4 AI stand-in"
+}

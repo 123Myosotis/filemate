@@ -1,0 +1,9 @@
+{
+  "status": "ready",
+  "bindings": [
+    {
+      "ambiguous_reason": "two columns match",
+      "alternatives": []
+    }
+  ]
+}

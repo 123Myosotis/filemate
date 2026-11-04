@@ -1,0 +1,538 @@
+{
+  "contract_version": "v1.0.0",
+  "published_at": "2026-10-18T00:00:00Z",
+  "min_acceptable_version": "v1.0.0",
+  "compat_window_until_version": "v1.0.0",
+  "priority_higher_wins": true,
+  "confidence_agg_allowed": [
+    "min"
+  ],
+  "review_min_fields_baseline": [
+    "judgment_id",
+    "based_on",
+    "confidence",
+    "anchor",
+    "declared_scope",
+    "execution_result_id",
+    "mechanical_check_id"
+  ],
+  "enums": {
+    "based_on": [
+      "full",
+      "summary",
+      "sample"
+    ],
+    "plan_status": [
+      "draft",
+      "ready",
+      "await_user",
+      "executing",
+      "pass",
+      "fail",
+      "rollback",
+      "stop",
+      "version_rejected",
+      "contract_incomplete",
+      "unanchored",
+      "non_idempotent_rerun",
+      "over_budget",
+      "review_reread"
+    ],
+    "global_judgment_type": [
+      "region_cover",
+      "binding",
+      "color_align",
+      "semantic_cover",
+      "chunk",
+      "join",
+      "review",
+      "delivery_cover",
+      "normalize",
+      "row_cover"
+    ],
+    "source_type": [
+      "user_utterance",
+      "user_budget",
+      "plan_ref"
+    ],
+    "source_type_object": {
+      "user_utterance": "utterance",
+      "user_budget": "budget",
+      "plan_ref": "plan_field"
+    },
+    "compare_op": [
+      "eq",
+      "le",
+      "ge"
+    ],
+    "filter_op": [
+      "eq",
+      "neq",
+      "contains",
+      "not_contains",
+      "not_empty",
+      "contains_any",
+      "contains_all"
+    ],
+    "join_type": [
+      "left",
+      "inner",
+      "right",
+      "full"
+    ],
+    "dsl_step": [
+      "read_range",
+      "apply_fills",
+      "drop_rows",
+      "project",
+      "align",
+      "filter",
+      "derive",
+      "aggregate",
+      "reconcile",
+      "normalize",
+      "join"
+    ],
+    "null_policy": [
+      "eq_null",
+      "neq_null",
+      "exclude_null",
+      "reject_null"
+    ],
+    "row_disposition": [
+      "processed",
+      "excluded",
+      "discarded"
+    ],
+    "diff_metric": [
+      "output_hash_eq",
+      "row_count_eq",
+      "cell_coord_set_eq"
+    ],
+    "review_of_review": [
+      "allow",
+      "forbid"
+    ],
+    "low_confidence_propagate": [
+      "degrade",
+      "no_degrade"
+    ],
+    "on_over_budget_strategy": [
+      "ask",
+      "rollback",
+      "drop_precision"
+    ],
+    "objective": [
+      "completeness_first",
+      "budget_first"
+    ],
+    "reset_rule": [
+      "forbid_reset",
+      "reset_after_user_confirm"
+    ],
+    "match_op": [
+      "id_prefix_eq",
+      "id_in_list"
+    ],
+    "redact_op": [
+      "replace",
+      "truncate"
+    ],
+    "degrade_state": [
+      "no_bind",
+      "no_align",
+      "audit_only"
+    ],
+    "delivery_check_item": [
+      "trace",
+      "conflict",
+      "uncovered",
+      "discard",
+      "口径"
+    ],
+    "trigger": [
+      "compare_fail",
+      "set_mismatch",
+      "cycle",
+      "over_budget",
+      "anchor_miss",
+      "version_reject",
+      "user_deny",
+      "contract_incomplete",
+      "row_cover_miss",
+      "normalize_miss",
+      "duplicate_key",
+      "cross_txn_misalign",
+      "meter_mismatch",
+      "calc_replay_fail"
+    ],
+    "conflict_kind": [
+      "field_ambiguous",
+      "color_ambiguous",
+      "unit_mismatch",
+      "duplicate_column",
+      "merge_misalign",
+      "subtotal_in_detail",
+      "requirement_mutex",
+      "join_key_not_unique",
+      "scope_unresolved",
+      "semantic_incomplete",
+      "legend_user_mismatch",
+      "cross_doc_color_drift",
+      "口径_id_mismatch"
+    ],
+    "calc_op": [
+      "sum",
+      "count",
+      "count_distinct",
+      "min",
+      "max",
+      "concat",
+      "filter_then"
+    ],
+    "round_mode": [
+      "half_even"
+    ],
+    "null_order": [
+      "first",
+      "last"
+    ],
+    "dedupe_keep": [
+      "first_in_order"
+    ],
+    "order_dir": [
+      "asc",
+      "desc"
+    ],
+    "empty_class": [
+      "vacant",
+      "unknown",
+      "na",
+      "unclassified_empty",
+      "value"
+    ],
+    "agg_null_policy": [
+      "skip",
+      "zero",
+      "reject",
+      "propagate"
+    ],
+    "agg_semantics_action": [
+      "skip",
+      "count_as_zero",
+      "fail",
+      "incomparable"
+    ],
+    "review_anchor_mode": [
+      "disjoint_sample",
+      "cross_basis"
+    ],
+    "meter_subject": [
+      "elapsed_ms",
+      "call_count"
+    ]
+  },
+  "deprecated_enum_values": {},
+  "confidence_thresholds": {
+    "default": 0.7,
+    "by_judgment_type": {
+      "region_cover": 0.8,
+      "binding": 0.75,
+      "color_align": 0.8,
+      "semantic_cover": 0.85,
+      "chunk": 0.7,
+      "join": 0.8,
+      "review": 0.75,
+      "delivery_cover": 0.8,
+      "normalize": 0.9,
+      "row_cover": 0.9
+    },
+    "forbid_degenerate": true,
+    "degenerate_values": [
+      0.0,
+      1.0
+    ]
+  },
+  "states": [
+    {
+      "state_id": "pass",
+      "priority": 10,
+      "exclusive_with": [
+        "fail",
+        "await_user",
+        "rollback",
+        "stop",
+        "version_rejected",
+        "contract_incomplete",
+        "unanchored",
+        "non_idempotent_rerun",
+        "over_budget"
+      ],
+      "merge_into": null,
+      "trigger": null
+    },
+    {
+      "state_id": "await_user",
+      "priority": 80,
+      "exclusive_with": [
+        "pass"
+      ],
+      "merge_into": null,
+      "trigger": "user_deny"
+    },
+    {
+      "state_id": "contract_incomplete",
+      "priority": 95,
+      "exclusive_with": [
+        "pass"
+      ],
+      "merge_into": null,
+      "trigger": "contract_incomplete"
+    },
+    {
+      "state_id": "unanchored",
+      "priority": 90,
+      "exclusive_with": [
+        "pass"
+      ],
+      "merge_into": null,
+      "trigger": "anchor_miss"
+    },
+    {
+      "state_id": "version_rejected",
+      "priority": 99,
+      "exclusive_with": [
+        "pass"
+      ],
+      "merge_into": null,
+      "trigger": "version_reject"
+    },
+    {
+      "state_id": "over_budget",
+      "priority": 85,
+      "exclusive_with": [
+        "pass"
+      ],
+      "merge_into": null,
+      "trigger": "over_budget"
+    },
+    {
+      "state_id": "non_idempotent_rerun",
+      "priority": 88,
+      "exclusive_with": [
+        "pass"
+      ],
+      "merge_into": null,
+      "trigger": "compare_fail"
+    },
+    {
+      "state_id": "rollback",
+      "priority": 92,
+      "exclusive_with": [
+        "pass"
+      ],
+      "merge_into": null,
+      "trigger": "compare_fail"
+    },
+    {
+      "state_id": "fail",
+      "priority": 70,
+      "exclusive_with": [
+        "pass"
+      ],
+      "merge_into": null,
+      "trigger": "compare_fail"
+    },
+    {
+      "state_id": "stop",
+      "priority": 100,
+      "exclusive_with": [],
+      "merge_into": null,
+      "trigger": null
+    },
+    {
+      "state_id": "review_reread",
+      "priority": 75,
+      "exclusive_with": [
+        "pass"
+      ],
+      "merge_into": null,
+      "trigger": "compare_fail",
+      "class": "review",
+      "order_in_class": 1
+    }
+  ],
+  "same_source_groups": [
+    [
+      "contract_version",
+      "catalog_version"
+    ],
+    [
+      "model_version",
+      "prompt_version"
+    ]
+  ],
+  "incompatible_pairs": [],
+  "version_dimensions": [
+    "contract_version",
+    "catalog_version",
+    "model_version",
+    "prompt_version",
+    "redact_version"
+  ],
+  "normalize_ops": [
+    "trim",
+    "casefold",
+    "nfkc",
+    "collapse_ws"
+  ],
+  "norm_ops": [
+    "identity",
+    "trim",
+    "casefold",
+    "width_fold",
+    "strip_grouping_sep",
+    "scale",
+    "empty_token",
+    "unit_factor"
+  ],
+  "null_tokens_default": [
+    "",
+    "null",
+    "none",
+    "na",
+    "n/a",
+    "-",
+    "—"
+  ],
+  "dsl_step_continuity_required": true,
+  "notes": "Baseline contract after delete-phase. Enums and thresholds live here; code only membership-checks and compares.",
+  "state_class_priority": [
+    "contract_incomplete",
+    "fail",
+    "version_rejected",
+    "over_budget",
+    "review",
+    "await_user",
+    "pass"
+  ],
+  "calc_ops": [
+    "sum",
+    "count",
+    "count_distinct",
+    "min",
+    "max",
+    "concat",
+    "filter_then"
+  ],
+  "agg_semantics_classes": [
+    "vacant",
+    "unknown",
+    "na",
+    "incomparable",
+    "unclassified_empty"
+  ],
+  "agg_semantics_required_action": {
+    "unclassified_empty": "fail"
+  },
+  "agg_null_matrix": {
+    "sum": {
+      "skip": true,
+      "zero": true,
+      "reject": true,
+      "propagate": true
+    },
+    "count": {
+      "skip": true,
+      "zero": true,
+      "reject": true,
+      "propagate": false
+    },
+    "count_distinct": {
+      "skip": true,
+      "zero": false,
+      "reject": true,
+      "propagate": false
+    },
+    "min": {
+      "skip": true,
+      "zero": false,
+      "reject": true,
+      "propagate": true
+    },
+    "max": {
+      "skip": true,
+      "zero": false,
+      "reject": true,
+      "propagate": true
+    },
+    "concat": {
+      "skip": true,
+      "zero": false,
+      "reject": true,
+      "propagate": true
+    },
+    "filter_then": {
+      "skip": true,
+      "zero": false,
+      "reject": true,
+      "propagate": false
+    }
+  },
+  "trigger_registry_version": "tr-1",
+  "meter_version": "m-1",
+  "redact_to_degrade": {
+    "replace": "no_bind",
+    "truncate": "audit_only"
+  },
+  "confidence_agg": {
+    "allowed": [
+      "min"
+    ],
+    "closed": true
+  },
+  "authority_scan": {
+    "rules_version": "as-1",
+    "industry_ban_patterns": [
+      "real_estate_only",
+      "industry\\s*==",
+      "if\\s+industry",
+      "地产专",
+      "医疗专"
+    ],
+    "forbidden_defs": [
+      "contract_gate_enabled",
+      "_match_col",
+      "_cell",
+      "PathName",
+      "_join",
+      "_column_value_samples",
+      "_schema_digest_for_ai",
+      "_column_profile",
+      "_catalog_lines_for_bind",
+      "_chunk_lines_by_budget",
+      "_numbered_catalog_lines",
+      "_resolve_catalog_ref",
+      "_json_list",
+      "_distinct_samples",
+      "_table_catalog_block",
+      "_auto_ffill",
+      "_apply_legend",
+      "_inject_keep_row_when",
+      "_fuzzy_table",
+      "_auto_forward_fill_cols"
+    ],
+    "forbidden_substrings": [
+      "FILEMATE_CONTRACT_GATE",
+      "gate_disabled",
+      "synth.fast_plan",
+      "forward_fill_columns"
+    ],
+    "forbidden_root_scripts": [
+      "_scan_delete.py",
+      "_body_gone_scan.py",
+      "_hardcode_scan.py",
+      "_purge_more.py"
+    ]
+  }
+}

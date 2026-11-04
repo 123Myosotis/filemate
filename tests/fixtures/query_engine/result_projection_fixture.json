@@ -1,0 +1,15 @@
+{
+  "note": "Independent ResultProjection schema fixture; not an executable op; not in op catalog.",
+  "result_projection": {
+    "columns": [
+      {
+        "column_id": "out_c1",
+        "display_name": "col_a",
+        "column_name_source": "from_portrait",
+        "source_step_id": "s1",
+        "derive_rule_ref": null,
+        "provenance": {"portrait_path": "portrait_query_extensions.queryable_columns[0]"}
+      }
+    ]
+  }
+}

@@ -1,0 +1,235 @@
+{
+  "status": "plan_ready",
+  "query_time_basis": "data_max_time",
+  "rollback_anchors": ["query_planner_start"],
+  "interaction_points": [],
+  "review_points": ["after_qe"],
+  "demand_points": [
+    {
+      "demand_id": "d_filter",
+      "kind": "filter",
+      "utterance_span": "span_filter",
+      "bound_step_id": "s_filter",
+      "bound_column_or_filter": "c_flag"
+    },
+    {
+      "demand_id": "d_join",
+      "kind": "join",
+      "utterance_span": "span_join",
+      "bound_step_id": "s_join",
+      "bound_column_or_filter": "c_key"
+    },
+    {
+      "demand_id": "d_win_a",
+      "kind": "time_window",
+      "utterance_span": "span_win_a",
+      "bound_step_id": "s_win_a",
+      "bound_column_or_filter": "c_ts"
+    },
+    {
+      "demand_id": "d_win_b",
+      "kind": "time_window",
+      "utterance_span": "span_win_b",
+      "bound_step_id": "s_win_b",
+      "bound_column_or_filter": "c_ts"
+    },
+    {
+      "demand_id": "d_exist",
+      "kind": "existence",
+      "utterance_span": "span_exist",
+      "bound_step_id": "s_exists",
+      "bound_column_or_filter": "exists_flag"
+    },
+    {
+      "demand_id": "d_h",
+      "kind": "group_latest",
+      "utterance_span": "span_h",
+      "bound_step_id": "s_topk",
+      "bound_column_or_filter": "c_score"
+    },
+    {
+      "demand_id": "d_arg",
+      "kind": "group_latest",
+      "utterance_span": "span_arg",
+      "bound_step_id": "s_arg",
+      "bound_column_or_filter": "c_score"
+    },
+    {
+      "demand_id": "d_derive",
+      "kind": "derive",
+      "utterance_span": "span_derive",
+      "bound_step_id": "s_derive",
+      "bound_column_or_filter": "c_mark"
+    },
+    {
+      "demand_id": "d_proj",
+      "kind": "projection",
+      "utterance_span": "span_proj",
+      "bound_step_id": "s_derive",
+      "bound_column_or_filter": "c_mark"
+    },
+    {
+      "demand_id": "d_proj_key",
+      "kind": "projection",
+      "utterance_span": "span_proj_key",
+      "bound_step_id": "s_join",
+      "bound_column_or_filter": "c_key"
+    }
+  ],
+  "condition_trees": {
+    "ct_exists": {
+      "node_kind": "EXISTS",
+      "children": [
+        {
+          "node_kind": "ATOM",
+          "atom": {"column_id": "c_flag", "cmp": "eq", "value": "yes"}
+        }
+      ]
+    }
+  },
+  "result_projection": {
+    "columns": [
+      {
+        "column_id": "c_key",
+        "display_name": "col_key",
+        "column_name_source": "from_portrait",
+        "source_step_id": "s_join",
+        "derive_rule_ref": null,
+        "provenance": {"utterance_span": "span_proj_key"}
+      },
+      {
+        "column_id": "c_mark",
+        "display_name": "col_mark",
+        "column_name_source": "from_ai_runtime",
+        "source_step_id": "s_derive",
+        "derive_rule_ref": "expr_mark",
+        "provenance": {"utterance_span": "span_proj"}
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step_id": "s_filter",
+      "op": "op_filter",
+      "args": {"column_id": "c_flag", "cmp": "eq", "value": "yes"},
+      "inputs": ["src:t0"],
+      "output": "h_filt",
+      "provenance": {"utterance_span": "span_filter"},
+      "rollback_anchor": "query_planner_start"
+    },
+    {
+      "step_id": "s_join",
+      "op": "op_join",
+      "args": {"left_key": "c_key", "right_key": "c_key"},
+      "inputs": ["h_filt", "src:t1"],
+      "output": "h_join",
+      "provenance": {"utterance_span": "span_join"},
+      "rollback_anchor": "query_planner_start"
+    },
+    {
+      "step_id": "s_iv_a",
+      "op": "op_interval_build",
+      "args": {"interval_desc": {"start": 1, "end": 10}},
+      "inputs": [],
+      "output": "h_iv_a",
+      "provenance": {"utterance_span": "span_win_a"},
+      "rollback_anchor": "query_planner_start"
+    },
+    {
+      "step_id": "s_win_a",
+      "op": "op_stamp_window",
+      "args": {
+        "stamp_column_id": "c_ts",
+        "interval_start": 1,
+        "interval_end": 10
+      },
+      "inputs": ["h_join"],
+      "output": "h_win_a",
+      "provenance": {"utterance_span": "span_win_a"},
+      "rollback_anchor": "query_planner_start"
+    },
+    {
+      "step_id": "s_iv_b",
+      "op": "op_interval_build",
+      "args": {"interval_desc": {"start": 2, "end": 20}},
+      "inputs": [],
+      "output": "h_iv_b",
+      "provenance": {"utterance_span": "span_win_b"},
+      "rollback_anchor": "query_planner_start"
+    },
+    {
+      "step_id": "s_win_b",
+      "op": "op_stamp_window",
+      "args": {
+        "stamp_column_id": "c_ts",
+        "interval_start": 2,
+        "interval_end": 20
+      },
+      "inputs": ["h_win_a_fan"],
+      "output": "h_win_b",
+      "provenance": {"utterance_span": "span_win_b"},
+      "rollback_anchor": "query_planner_start"
+    },
+    {
+      "step_id": "s_exists",
+      "op": "op_exists_any",
+      "args": {"column_id": "c_flag", "value": "yes", "mode": "EXISTS"},
+      "inputs": ["h_win_b"],
+      "output": "h_exists",
+      "provenance": {"utterance_span": "span_exist"},
+      "rollback_anchor": "query_planner_start"
+    },
+    {
+      "step_id": "s_topk",
+      "op": "op_group_top_k",
+      "args": {
+        "group_column_id": "c_key",
+        "sort_column_id": "c_score",
+        "direction": "desc",
+        "k": 1
+      },
+      "inputs": ["h_win_b"],
+      "output": "h_topk",
+      "claims_group_latest": true,
+      "provenance": {"utterance_span": "span_h"},
+      "rollback_anchor": "query_planner_start"
+    },
+    {
+      "step_id": "s_arg",
+      "op": "op_arg_extremum",
+      "args": {
+        "group_column_id": "c_key",
+        "sort_column_id": "c_score",
+        "direction": "desc"
+      },
+      "inputs": ["h_topk"],
+      "output": "h_arg",
+      "claims_group_latest": true,
+      "provenance": {"utterance_span": "span_arg"},
+      "rollback_anchor": "query_planner_start"
+    },
+    {
+      "step_id": "s_derive",
+      "op": "op_derive",
+      "args": {
+        "out_column_id": "c_mark",
+        "expr": {"kind": "const", "const": "marked"}
+      },
+      "inputs": ["h_arg"],
+      "output": "h_derive",
+      "provenance": {"utterance_span": "span_derive"},
+      "rollback_anchor": "query_planner_start"
+    }
+  ],
+  "edges": [
+    {"from": "h_filt", "to": "s_join", "cardinality": "one"},
+    {
+      "from": "h_win_a",
+      "to": "s_win_b",
+      "cardinality": "one_to_many",
+      "alias": "h_win_a_fan"
+    },
+    {"from": "h_win_b", "to": "s_exists", "cardinality": "one"},
+    {"from": "h_win_b", "to": "s_topk", "cardinality": "one"}
+  ]
+}

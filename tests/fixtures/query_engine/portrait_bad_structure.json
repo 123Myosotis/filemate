@@ -1,0 +1,9 @@
+{
+  "structure_status": "upstream_absent",
+  "portrait_query_extensions": {
+    "queryable_columns": [{"column_id": "c1", "type_class": "key"}],
+    "column_value_profiles": [],
+    "time_axis_candidates": [],
+    "join_key_candidates": []
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "structure_status": "layers_recognized",
+  "portrait_query_extensions": {
+    "queryable_columns": [{"column_id": "c1", "type_class": "key"}],
+    "time_axis_candidates": [],
+    "join_key_candidates": []
+  }
+}

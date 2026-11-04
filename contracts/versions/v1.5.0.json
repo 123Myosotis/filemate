@@ -1,0 +1,1264 @@
+{
+  "contract_version": "v1.5.0",
+  "published_at": "2026-10-20T00:00:00Z",
+  "min_acceptable_version": "v1.1.0",
+  "compat_window_until_version": "v1.4.0",
+  "priority_higher_wins": true,
+  "confidence_agg_allowed": [
+    "min"
+  ],
+  "review_min_fields_baseline": [
+    "judgment_id",
+    "based_on",
+    "confidence",
+    "anchor",
+    "declared_scope",
+    "execution_result_id",
+    "mechanical_check_id"
+  ],
+  "enums": {
+    "based_on": [
+      "full",
+      "summary",
+      "sample"
+    ],
+    "plan_status": [
+      "draft",
+      "ready",
+      "await_user",
+      "executing",
+      "pass",
+      "fail",
+      "rollback",
+      "stop",
+      "version_rejected",
+      "contract_incomplete",
+      "unanchored",
+      "non_idempotent_rerun",
+      "over_budget",
+      "review_reread"
+    ],
+    "global_judgment_type": [
+      "region_cover",
+      "binding",
+      "color_align",
+      "semantic_cover",
+      "chunk",
+      "join",
+      "review",
+      "delivery_cover",
+      "normalize",
+      "row_cover"
+    ],
+    "source_type": [
+      "user_utterance",
+      "user_budget",
+      "plan_ref"
+    ],
+    "source_type_object": {
+      "user_utterance": "utterance",
+      "user_budget": "budget",
+      "plan_ref": "plan_field"
+    },
+    "compare_op": [
+      "eq",
+      "le",
+      "ge"
+    ],
+    "join_type": [
+      "left",
+      "inner",
+      "right",
+      "full"
+    ],
+    "dsl_step": [
+      "read_range",
+      "apply_fills",
+      "drop_rows",
+      "project",
+      "align",
+      "filter",
+      "derive",
+      "aggregate",
+      "reconcile",
+      "normalize",
+      "join"
+    ],
+    "null_policy": [
+      "eq_null",
+      "neq_null",
+      "exclude_null",
+      "reject_null"
+    ],
+    "row_disposition": [
+      "processed",
+      "excluded",
+      "discarded"
+    ],
+    "diff_metric": [
+      "output_hash_eq",
+      "row_count_eq",
+      "cell_coord_set_eq"
+    ],
+    "review_of_review": [
+      "allow",
+      "forbid"
+    ],
+    "low_confidence_propagate": [
+      "degrade",
+      "no_degrade"
+    ],
+    "on_over_budget_strategy": [
+      "ask",
+      "rollback",
+      "drop_precision"
+    ],
+    "objective": [
+      "completeness_first",
+      "budget_first"
+    ],
+    "reset_rule": [
+      "forbid_reset",
+      "reset_after_user_confirm"
+    ],
+    "match_op": [
+      "id_prefix_eq",
+      "id_in_list"
+    ],
+    "redact_op": [
+      "replace",
+      "truncate"
+    ],
+    "degrade_state": [
+      "no_bind",
+      "no_align",
+      "audit_only"
+    ],
+    "delivery_check_item": [
+      "trace",
+      "conflict",
+      "uncovered",
+      "discard",
+      "口径"
+    ],
+    "trigger": [
+      "compare_fail",
+      "set_mismatch",
+      "cycle",
+      "over_budget",
+      "anchor_miss",
+      "version_reject",
+      "user_deny",
+      "contract_incomplete",
+      "row_cover_miss",
+      "normalize_miss",
+      "duplicate_key",
+      "cross_txn_misalign",
+      "meter_mismatch",
+      "calc_replay_fail"
+    ],
+    "conflict_kind": [
+      "field_ambiguous",
+      "color_ambiguous",
+      "unit_mismatch",
+      "duplicate_column",
+      "merge_misalign",
+      "subtotal_in_detail",
+      "requirement_mutex",
+      "join_key_not_unique",
+      "scope_unresolved",
+      "semantic_incomplete",
+      "legend_user_mismatch",
+      "cross_doc_color_drift",
+      "口径_id_mismatch"
+    ],
+    "calc_op": [
+      "sum",
+      "count",
+      "count_distinct",
+      "min",
+      "max",
+      "concat",
+      "filter_then"
+    ],
+    "round_mode": [
+      "half_even"
+    ],
+    "null_order": [
+      "first",
+      "last"
+    ],
+    "dedupe_keep": [
+      "first_in_order"
+    ],
+    "order_dir": [
+      "asc",
+      "desc"
+    ],
+    "empty_class": [
+      "vacant",
+      "unknown",
+      "na",
+      "unclassified_empty",
+      "value"
+    ],
+    "agg_null_policy": [
+      "skip",
+      "zero",
+      "reject",
+      "propagate"
+    ],
+    "agg_semantics_action": [
+      "skip",
+      "count_as_zero",
+      "fail",
+      "incomparable"
+    ],
+    "review_anchor_mode": [
+      "disjoint_sample",
+      "cross_basis"
+    ],
+    "meter_subject": [
+      "elapsed_ms",
+      "call_count"
+    ],
+    "cmp_op": [
+      "eq",
+      "neq",
+      "contains",
+      "not_contains",
+      "not_empty",
+      "contains_any",
+      "contains_all"
+    ]
+  },
+  "deprecated_enum_values": {},
+  "confidence_thresholds": {
+    "default": 0.7,
+    "by_judgment_type": {
+      "region_cover": 0.8,
+      "binding": 0.75,
+      "color_align": 0.8,
+      "semantic_cover": 0.85,
+      "chunk": 0.7,
+      "join": 0.8,
+      "review": 0.75,
+      "delivery_cover": 0.8,
+      "normalize": 0.9,
+      "row_cover": 0.9
+    },
+    "forbid_degenerate": true,
+    "degenerate_values": [
+      0.0,
+      1.0
+    ]
+  },
+  "states": [
+    {
+      "state_id": "pass",
+      "priority": 10,
+      "exclusive_with": [
+        "fail",
+        "await_user",
+        "rollback",
+        "stop",
+        "version_rejected",
+        "contract_incomplete",
+        "unanchored",
+        "non_idempotent_rerun",
+        "over_budget"
+      ],
+      "merge_into": null,
+      "trigger": null
+    },
+    {
+      "state_id": "await_user",
+      "priority": 80,
+      "exclusive_with": [
+        "pass"
+      ],
+      "merge_into": null,
+      "trigger": "user_deny"
+    },
+    {
+      "state_id": "contract_incomplete",
+      "priority": 95,
+      "exclusive_with": [
+        "pass"
+      ],
+      "merge_into": null,
+      "trigger": "contract_incomplete"
+    },
+    {
+      "state_id": "unanchored",
+      "priority": 90,
+      "exclusive_with": [
+        "pass"
+      ],
+      "merge_into": null,
+      "trigger": "anchor_miss"
+    },
+    {
+      "state_id": "version_rejected",
+      "priority": 99,
+      "exclusive_with": [
+        "pass"
+      ],
+      "merge_into": null,
+      "trigger": "version_reject"
+    },
+    {
+      "state_id": "over_budget",
+      "priority": 85,
+      "exclusive_with": [
+        "pass"
+      ],
+      "merge_into": null,
+      "trigger": "over_budget"
+    },
+    {
+      "state_id": "non_idempotent_rerun",
+      "priority": 88,
+      "exclusive_with": [
+        "pass"
+      ],
+      "merge_into": null,
+      "trigger": "compare_fail"
+    },
+    {
+      "state_id": "rollback",
+      "priority": 92,
+      "exclusive_with": [
+        "pass"
+      ],
+      "merge_into": null,
+      "trigger": "compare_fail"
+    },
+    {
+      "state_id": "fail",
+      "priority": 70,
+      "exclusive_with": [
+        "pass"
+      ],
+      "merge_into": null,
+      "trigger": "compare_fail"
+    },
+    {
+      "state_id": "stop",
+      "priority": 100,
+      "exclusive_with": [],
+      "merge_into": null,
+      "trigger": null
+    },
+    {
+      "state_id": "review_reread",
+      "priority": 75,
+      "exclusive_with": [
+        "pass"
+      ],
+      "merge_into": null,
+      "trigger": "compare_fail",
+      "class": "review",
+      "order_in_class": 1
+    }
+  ],
+  "same_source_groups": [
+    [
+      "contract_version",
+      "catalog_version"
+    ],
+    [
+      "model_version",
+      "prompt_version"
+    ]
+  ],
+  "incompatible_pairs": [],
+  "version_dimensions": [
+    "contract_version",
+    "catalog_version",
+    "model_version",
+    "prompt_version",
+    "redact_version"
+  ],
+  "normalize_ops": [
+    "trim",
+    "casefold",
+    "nfkc",
+    "collapse_ws"
+  ],
+  "norm_ops": [
+    "identity",
+    "trim",
+    "casefold",
+    "width_fold",
+    "strip_grouping_sep",
+    "scale",
+    "empty_token",
+    "unit_factor"
+  ],
+  "null_tokens_default": [
+    "",
+    "null",
+    "none",
+    "na",
+    "n/a",
+    "-",
+    "—"
+  ],
+  "dsl_step_continuity_required": true,
+  "notes": "Direction-2 restricted operator set. Plans require ops[]. filter_op renamed to cmp_op. No column_origins field. empty_role_coverage dump schema unchanged from v1.0.0 hardfix pack.",
+  "state_class_priority": [
+    "contract_incomplete",
+    "fail",
+    "version_rejected",
+    "over_budget",
+    "review",
+    "await_user",
+    "pass"
+  ],
+  "calc_ops": [
+    "sum",
+    "count",
+    "count_distinct",
+    "min",
+    "max",
+    "concat",
+    "filter_then"
+  ],
+  "agg_semantics_classes": [
+    "vacant",
+    "unknown",
+    "na",
+    "incomparable",
+    "unclassified_empty"
+  ],
+  "agg_semantics_required_action": {
+    "unclassified_empty": "fail"
+  },
+  "agg_null_matrix": {
+    "sum": {
+      "skip": true,
+      "zero": true,
+      "reject": true,
+      "propagate": true
+    },
+    "count": {
+      "skip": true,
+      "zero": true,
+      "reject": true,
+      "propagate": false
+    },
+    "count_distinct": {
+      "skip": true,
+      "zero": false,
+      "reject": true,
+      "propagate": false
+    },
+    "min": {
+      "skip": true,
+      "zero": false,
+      "reject": true,
+      "propagate": true
+    },
+    "max": {
+      "skip": true,
+      "zero": false,
+      "reject": true,
+      "propagate": true
+    },
+    "concat": {
+      "skip": true,
+      "zero": false,
+      "reject": true,
+      "propagate": true
+    },
+    "filter_then": {
+      "skip": true,
+      "zero": false,
+      "reject": true,
+      "propagate": false
+    }
+  },
+  "trigger_registry_version": "tr-1",
+  "meter_version": "m-1",
+  "redact_to_degrade": {
+    "replace": "no_bind",
+    "truncate": "audit_only"
+  },
+  "confidence_agg": {
+    "allowed": [
+      "min"
+    ],
+    "closed": true
+  },
+  "authority_scan": {
+    "rules_version": "as-2",
+    "industry_ban_patterns": [
+      "real_estate_only",
+      "industry\\s*==",
+      "if\\s+industry",
+      "地产专",
+      "医疗专"
+    ],
+    "forbidden_defs": [
+      "contract_gate_enabled",
+      "_match_col",
+      "_cell",
+      "PathName",
+      "_join",
+      "_column_value_samples",
+      "_schema_digest_for_ai",
+      "_column_profile",
+      "_catalog_lines_for_bind",
+      "_chunk_lines_by_budget",
+      "_numbered_catalog_lines",
+      "_resolve_catalog_ref",
+      "_json_list",
+      "_distinct_samples",
+      "_table_catalog_block",
+      "_auto_ffill",
+      "_apply_legend",
+      "_inject_keep_row_when",
+      "_fuzzy_table",
+      "_auto_forward_fill_cols"
+    ],
+    "forbidden_substrings": [
+      "FILEMATE_CONTRACT_GATE",
+      "gate_disabled",
+      "synth.fast_plan",
+      "forward_fill_columns"
+    ],
+    "forbidden_root_scripts": [
+      "_scan_delete.py",
+      "_body_gone_scan.py",
+      "_hardcode_scan.py",
+      "_purge_more.py"
+    ]
+  },
+  "operator_set": [
+    {
+      "op": "join",
+      "param_object": "joins",
+      "param_ref": "join_ref",
+      "cmp_enum": null
+    },
+    {
+      "op": "filter",
+      "param_object": "filters",
+      "param_ref": "filter_ref",
+      "cmp_enum": "cmp_op"
+    },
+    {
+      "op": "derive",
+      "param_object": "derives",
+      "param_ref": "derive_ref",
+      "cmp_enum": "cmp_op"
+    },
+    {
+      "op": "map_values",
+      "param_object": "value_maps",
+      "param_ref": "map_ref",
+      "cmp_enum": null
+    },
+    {
+      "op": "order",
+      "param_object": "order_specs",
+      "param_ref": "order_ref",
+      "cmp_enum": null
+    },
+    {
+      "op": "dedupe",
+      "param_object": "dedupe_specs",
+      "param_ref": "dedupe_ref",
+      "cmp_enum": null
+    },
+    {
+      "op": "aggregate",
+      "param_object": "agg_specs",
+      "param_ref": "agg_ref",
+      "cmp_enum": null
+    },
+    {
+      "op": "project",
+      "param_object": "project_specs",
+      "param_ref": "project_ref",
+      "cmp_enum": null
+    }
+  ],
+  "fixed_op_order": [
+    "join",
+    "filter",
+    "derive",
+    "map_values",
+    "order",
+    "dedupe",
+    "aggregate",
+    "project"
+  ],
+  "param_object_id_rules": {
+    "ops_direct": {
+      "primary_key": "id",
+      "objects": [
+        "joins",
+        "filters",
+        "derives",
+        "value_maps",
+        "order_specs",
+        "dedupe_specs",
+        "agg_specs",
+        "project_specs"
+      ],
+      "rule": "ops[i].<param_ref> must equal object.id"
+    },
+    "indirect": {
+      "calc_specs": {
+        "primary_key": "calc_id"
+      },
+      "norm_specs": {
+        "primary_key": "norm_id"
+      },
+      "rule": "not referenced by ops[]; referenced by other param objects via calc_id/norm_id/order_id"
+    },
+    "order_reference": {
+      "from_objects": [
+        "dedupe_specs",
+        "agg_specs"
+      ],
+      "field": "order_id",
+      "targets": "order_specs[].id",
+      "forbidden_redundant": [
+        "order_spec_id"
+      ]
+    },
+    "forbidden_plan_fields": [
+      "column_origins",
+      "keep_row_when",
+      "derived_columns",
+      "value_mappings",
+      "output_columns"
+    ]
+  },
+  "empty_role_coverage_fields": [
+    "role",
+    "side",
+    "field",
+    "source_table",
+    "map_id",
+    "shared_map_id",
+    "has_empty_token_map"
+  ],
+  "empty_role_coverage_note": "Dump-only schema for acceptance plan dumps. Field names and semantics identical to acceptance/accuracy_hardfix_20261018/real_table_plan.json (v1.0.0 hardfix).",
+  "cross_table": {
+    "schema_version": "1",
+    "trigger_mode": "ask_on_candidate",
+    "equality_basis": "either",
+    "confirm_required": true,
+    "unmatched_disposition": "retain_unmatched",
+    "output_grain": "noop",
+    "decision_status": "proposed",
+    "proposal_status": "ambiguous",
+    "replay_policy": "replay_on_fingerprint",
+    "reserved_long_columns": [
+      "attribute_name",
+      "attribute_value"
+    ],
+    "enums": {
+      "trigger_mode": [
+        "ask_on_candidate",
+        "utterance_only",
+        "always_attempt"
+      ],
+      "equality_basis": [
+        "target_name",
+        "source_label",
+        "either"
+      ],
+      "unmatched_disposition": [
+        "retain_unmatched",
+        "drop_unmatched",
+        "route_unmatched"
+      ],
+      "output_grain": [
+        "noop",
+        "per_concept",
+        "per_source",
+        "shared_key"
+      ],
+      "row_shape": [
+        "wide",
+        "long"
+      ],
+      "decision_status": [
+        "proposed",
+        "confirmed",
+        "rejected",
+        "deferred"
+      ],
+      "proposal_status": [
+        "ok",
+        "ambiguous",
+        "invalid"
+      ],
+      "candidate_kind": [
+        "exact",
+        "synonym",
+        "concept",
+        "alias"
+      ],
+      "align_key_rule": [
+        "dimension_member",
+        "sole_list",
+        "user_picked"
+      ],
+      "interrupt_kind": [
+        "synonym_merge",
+        "alias_link",
+        "unmatched_policy",
+        "output_grain",
+        "join_hypothesis_pick",
+        "output_spec_pick"
+      ],
+      "cardinality": [
+        "one_to_one",
+        "one_to_many",
+        "many_to_many"
+      ],
+      "replay_policy": [
+        "replay_on_fingerprint",
+        "refuse_on_mismatch"
+      ],
+      "name_normalize_op": [
+        "trim",
+        "casefold",
+        "width_fold"
+      ],
+      "value_sample_policy": [
+        "inherit_field_digest"
+      ],
+      "reply": [
+        "confirm",
+        "reject",
+        "defer",
+        "rethink",
+        "specify"
+      ],
+      "align_key_status": [
+        "resolved",
+        "ambiguous"
+      ],
+      "link_kind": [
+        "exact",
+        "alias"
+      ],
+      "matched_on": [
+        "target_name",
+        "source_label"
+      ],
+      "join_type": [
+        "left",
+        "inner",
+        "full"
+      ],
+      "layer_recognize_status": [
+        "no_structure",
+        "ok",
+        "review_failed",
+        "conflict"
+      ],
+      "layer_recognize_conflict_reason": [
+        "proposal_retries_exhausted",
+        "ask_subset_request_over_capacity",
+        "shrink_failed",
+        "already_minimal_still_over_capacity",
+        "ask_budget_exhausted_proposal",
+        "ask_budget_exhausted_subset",
+        "ask_budget_exhausted_review",
+        "success_payload_incomplete"
+      ],
+      "portrait_write_failure_code": [
+        "field_missing",
+        "mapping_undefined",
+        "write_rejected"
+      ],
+      "header_completeness": [
+        "complete",
+        "incomplete",
+        "not_header"
+      ],
+      "routing_trace_kind": [
+        "layer_propose",
+        "layer_ask_subset",
+        "layer_formal_review",
+        "stage_plan_generate",
+        "stage_plan_review",
+        "stage_exec_model",
+        "conflict_four_part_ask",
+        "conflict_user_reply",
+        "orchestrate_decision"
+      ],
+      "orchestrate_decision_kind": [
+        "retry_a_prime",
+        "hand_off_e",
+        "stop_workbook",
+        "continue_next_block",
+        "rerun_all_a_prime",
+        "retry_portrait_write",
+        "enter_b",
+        "enter_s"
+      ],
+      "orchestrate_trigger_source": [
+        "user",
+        "orchestrator"
+      ]
+    },
+    "error_codes": [
+      "cross_table_input_invalid",
+      "cross_table_contract_invalid",
+      "cross_table_proposal_invalid",
+      "cross_table_fingerprint_mismatch",
+      "cross_table_reply_invalid",
+      "cross_table_unconfirmed",
+      "cross_table_grain_conflict",
+      "cross_table_log_io",
+      "cross_table_r2_key_mutation_forbidden",
+      "cross_table_align_key_ambiguous",
+      "cross_table_parent_table_unresolvable",
+      "cross_table_join_hypothesis_invalid",
+      "trace_io_failed",
+      "cross_table_audit_structure_invalid"
+    ],
+    "needs_retry_reason_codes": [
+      "missing_required",
+      "unknown_member",
+      "member_overlap"
+    ],
+    "rank_top_n": 3,
+    "proposal_max_calls_per_kind": 1,
+    "user_retry_max_rounds": 3,
+    "trace_dir": "diagnostics/trace",
+    "trace_filename_pattern": "{kind}_{seq}_{ts}.json",
+    "sample_preview_cap": 8,
+    "join_reason_codes": [
+      "unknown_field",
+      "same_table",
+      "invalid_join_type",
+      "duplicate_hypothesis_id",
+      "empty_rationale"
+    ],
+    "JoinHypothesis": {
+      "required": [
+        "hypothesis_id",
+        "left",
+        "right",
+        "join_type",
+        "rationale"
+      ],
+      "properties": {
+        "hypothesis_id": {
+          "type": "string"
+        },
+        "left": {
+          "type": "object",
+          "required": [
+            "parent_table_id",
+            "block_id",
+            "field_id"
+          ]
+        },
+        "right": {
+          "type": "object",
+          "required": [
+            "parent_table_id",
+            "block_id",
+            "field_id"
+          ]
+        },
+        "join_type": {
+          "enum": [
+            "left",
+            "inner",
+            "full"
+          ]
+        },
+        "rationale": {
+          "type": "string"
+        }
+      }
+    },
+    "RankedHypothesis": {
+      "allOf": [
+        {
+          "": "JoinHypothesis"
+        }
+      ],
+      "properties": {
+        "coverage_ratio": {
+          "type": "number"
+        }
+      }
+    },
+    "OutputSpec": {
+      "required": [
+        "output_spec_id",
+        "columns",
+        "row_shape",
+        "output_grain",
+        "rationale"
+      ],
+      "properties": {
+        "output_spec_id": {
+          "type": "string"
+        },
+        "row_shape": {
+          "enum": [
+            "wide",
+            "long"
+          ]
+        },
+        "output_grain": {
+          "enum": [
+            "per_row",
+            "per_concept_group"
+          ]
+        },
+        "rationale": {
+          "type": "string"
+        }
+      }
+    },
+    "join_question_templates": {
+      "pair": "按 {left_label} ↔ {right_label} 关联",
+      "join_type_text": {
+        "left": "保留左侧所有行",
+        "inner": "只保留两侧都有的",
+        "full": "全部保留"
+      },
+      "none_match": "都不对 / 我自己指定",
+      "ask_columns": "请告诉我按哪两列关联"
+    },
+    "layer_recognize_ask_max_rounds": 8,
+    "layer_recognize_entry_retry_max": 3,
+    "portrait_write_retry_max": 2,
+    "LayerRecognizeReviewFailed": {
+      "required": [
+        "status",
+        "rejection_reason",
+        "review_locator_ids",
+        "ask_rounds_used",
+        "layer_result_empty",
+        "draft_retained"
+      ],
+      "properties": {
+        "status": {
+          "const": "review_failed"
+        },
+        "rejection_reason": {
+          "type": "string"
+        },
+        "review_locator_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "ask_rounds_used": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "layer_result_empty": {
+          "type": "boolean",
+          "const": true
+        },
+        "draft_retained": {
+          "type": "boolean",
+          "const": true
+        }
+      }
+    },
+    "LayerRecognizeConflict": {
+      "required": [
+        "status",
+        "reason_codes",
+        "ask_rounds_used",
+        "layer_result_empty",
+        "draft_retained"
+      ],
+      "properties": {
+        "status": {
+          "const": "conflict"
+        },
+        "reason_codes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "ask_rounds_used": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "layer_result_empty": {
+          "type": "boolean",
+          "const": true
+        },
+        "draft_retained": {
+          "type": "boolean",
+          "const": true
+        },
+        "portrait_metric_hint": {
+          "type": "object"
+        }
+      }
+    },
+    "LayerRecognizeOk": {
+      "required_layer_fields": [
+        "rect_to_layer",
+        "layer_order",
+        "layers",
+        "subtable_boundaries",
+        "nesting_facts",
+        "group_label_declaration",
+        "dimension_membership",
+        "header_completeness"
+      ]
+    },
+    "StageReviewResult": {
+      "required": [
+        "needs_user_ask"
+      ],
+      "properties": {
+        "needs_user_ask": {
+          "type": "boolean"
+        }
+      }
+    },
+    "portrait_write_failure_error_class": {
+      "field_missing": "cross_table_contract_invalid",
+      "mapping_undefined": "cross_table_contract_invalid",
+      "write_rejected": "cross_table_input_invalid"
+    },
+    "layer_recognize_kinds": [
+      "layer_propose",
+      "layer_ask_subset",
+      "layer_formal_review"
+    ],
+    "layer_recognize_kinds_note": "Reference list into enums.routing_trace_kind (single source of truth). Not a second enum. Every member must be in routing_trace_kind. A-prime write_trace kind must be one of these three.",
+    "error_code_boundaries": {
+      "cross_table_contract_invalid": "Missing or illegal contract keys/values (including batch2 schema/enum keys).",
+      "cross_table_audit_structure_invalid": "Trace metadata fails audit primary-key rules: missing run_id; missing trigger_source; call_kind not in allowed set; block_id normalize collision within same run; decision_params shape violation. code string MUST be cross_table_audit_structure_invalid (standalone); do not wrap as cross_table_contract_invalid. Do not write trace storage.",
+      "trace_io_failed": "trace_dir / trace_filename_pattern missing or illegal; filesystem IO; empty file."
+    },
+    "trace_filename_placeholders": {
+      "kind": "Equals call_kind / node kind literal from routing_trace_kind",
+      "seq": "Global write-sequence (not entry_seq / kind_seq)",
+      "ts": "Clock-formatted timestamp",
+      "note": "Quintuple lives in JSON meta only; not required filename placeholders."
+    },
+    "LayerRecognizeTraceMeta": {
+      "required": [
+        "run_id",
+        "block_id",
+        "entry_seq",
+        "call_kind",
+        "kind_seq",
+        "counts_toward_ask"
+      ],
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "block_id": {
+          "type": "string",
+          "minLength": 1,
+          "note": "Normalize int/string to string before store. Within one run_id, if two distinct raw block_ids normalize to the same string, raise cross_table_audit_structure_invalid (collision)."
+        },
+        "block_id_raw": {
+          "description": "Optional original value before normalize; for collision diagnostics"
+        },
+        "entry_seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "call_kind": {
+          "type": "string",
+          "note": "Must be member of layer_recognize_kinds (subset of routing_trace_kind)"
+        },
+        "kind_seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "counts_toward_ask": {
+          "type": "boolean"
+        }
+      },
+      "block_id_normalize_rules": {
+        "normalize": "str(raw) with no extra padding; bool rejected",
+        "collision": "Same run_id + two different raw ids -> same normalized string => cross_table_audit_structure_invalid; do not write"
+      }
+    },
+    "OrchestrateDecisionTraceMeta": {
+      "required": [
+        "run_id",
+        "orchestrate_seq",
+        "decision_kind",
+        "trigger_source",
+        "decision_params"
+      ],
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "orchestrate_seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "decision_kind": {
+          "type": "string"
+        },
+        "trigger_source": {
+          "type": "string",
+          "enum": [
+            "user",
+            "orchestrator"
+          ]
+        },
+        "block_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "entry_seq": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "trigger_status": {
+          "type": "string"
+        },
+        "decision_params": {
+          "type": "object"
+        }
+      },
+      "decision_params_rules": {
+        "mechanical_shape": {
+          "mechanical": true
+        },
+        "reasoned_requires": "rationale_text non-empty string from user/model only",
+        "invalid_cases": [
+          "mechanical decision with non-empty rationale_text => cross_table_audit_structure_invalid",
+          "reasoned decision with only {mechanical: true} => cross_table_audit_structure_invalid",
+          "rationale_text non-empty AND mechanical true simultaneously => cross_table_audit_structure_invalid"
+        ]
+      }
+    },
+    "ConflictSessionTraceMeta": {
+      "required": [
+        "run_id",
+        "conflict_session_seq",
+        "call_kind",
+        "kind_seq"
+      ],
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "conflict_session_seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "call_kind": {
+          "type": "string",
+          "enum": [
+            "conflict_four_part_ask",
+            "conflict_user_reply"
+          ]
+        },
+        "kind_seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "block_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "stage_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "StagePlanTraceMeta": {
+      "required": [
+        "run_id",
+        "plan_generation",
+        "call_kind",
+        "kind_seq"
+      ],
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "plan_generation": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "call_kind": {
+          "type": "string",
+          "enum": [
+            "stage_plan_generate",
+            "stage_plan_review"
+          ]
+        },
+        "kind_seq": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "StageExecTraceMeta": {
+      "required": [
+        "run_id",
+        "stage_id",
+        "call_kind",
+        "kind_seq"
+      ],
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "stage_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "call_kind": {
+          "type": "string"
+        },
+        "kind_seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "input_block_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "note": "Optional in batch2. Hook for subsequent-12 S contract: when S triggers cross-block ownership rollback (point 4), the trace MUST carry input_block_ids; otherwise S-side structure invalid."
+        }
+      },
+      "subsequent_12_hook": "S contract (后续-12) must require input_block_ids when S triggers 跨块归属④ rollback; missing => S structure invalid. Batch2 only reserves the optional field + this hook."
+    }
+  },
+  "version": "1.5.0"
+}

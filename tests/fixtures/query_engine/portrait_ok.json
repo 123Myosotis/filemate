@@ -1,0 +1,32 @@
+{
+  "structure_status": "layers_recognized",
+  "portrait_query_extensions": {
+    "queryable_columns": [
+      {"column_id": "c1", "type_class": "key"},
+      {"column_id": "c2", "type_class": "measure"}
+    ],
+    "column_value_profiles": [
+      {
+        "column_id": "c1",
+        "cardinality_class": "low",
+        "term_expand_domain": [],
+        "domain_cap_status": "within_cap"
+      },
+      {
+        "column_id": "c2",
+        "cardinality_class": "high",
+        "term_expand_domain": [],
+        "domain_cap_status": "unavailable"
+      }
+    ],
+    "time_axis_candidates": [
+      {
+        "value_domain": {"kind": "calendar"},
+        "granularity": "day",
+        "hierarchy": ["day", "month"],
+        "source_locator": {"column_id": "c_time"}
+      }
+    ],
+    "join_key_candidates": []
+  }
+}

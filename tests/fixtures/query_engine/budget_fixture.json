@@ -1,0 +1,3 @@
+{
+  "note": "DEPRECATED. Numerics live only under contract_slice_fixture.json#test_only_numeric_overrides. CURRENT production slots are null."
+}

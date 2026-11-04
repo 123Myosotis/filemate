@@ -1,0 +1,159 @@
+{
+  "plan": {
+    "agg_specs": [
+      {
+        "agg_semantics": {
+          "count": {
+            "incomparable": "incomparable",
+            "na": "skip",
+            "unclassified_empty": "fail",
+            "unknown": "skip",
+            "vacant": "skip"
+          }
+        },
+        "calc_id": "c1",
+        "group_columns": [
+          "g"
+        ],
+        "order_spec_id": "o1"
+      }
+    ],
+    "calc_specs": [
+      {
+        "agg_null_policy": "skip",
+        "calc_id": "c1",
+        "calc_version": "1",
+        "result_column": "agg_result",
+        "steps": [
+          {
+            "column": "v",
+            "op": "count"
+          }
+        ]
+      }
+    ],
+    "dedupe_specs": [
+      {
+        "keep": "first_in_order",
+        "key_column": "g",
+        "key_norm_id": "kn_id",
+        "order_spec_id": "o1"
+      }
+    ],
+    "empty_token_maps": [
+      {
+        "candidates": [
+          "",
+          "未知",
+          "不适用",
+          "N/A",
+          "n/a"
+        ],
+        "column": "g",
+        "map_id": "em_t_na_g",
+        "mapping": [
+          {
+            "enum": "vacant",
+            "raw": ""
+          },
+          {
+            "enum": "unknown",
+            "raw": "未知"
+          },
+          {
+            "enum": "na",
+            "raw": "不适用"
+          }
+        ],
+        "source_table": "t"
+      },
+      {
+        "candidates": [
+          "",
+          "未知",
+          "不适用",
+          "N/A",
+          "n/a"
+        ],
+        "column": "v",
+        "map_id": "em_t_na_v",
+        "mapping": [
+          {
+            "enum": "vacant",
+            "raw": ""
+          },
+          {
+            "enum": "unknown",
+            "raw": "未知"
+          },
+          {
+            "enum": "na",
+            "raw": "不适用"
+          }
+        ],
+        "source_table": "t"
+      }
+    ],
+    "norm_specs": [
+      {
+        "idempotent": true,
+        "norm_id": "kn_id",
+        "steps": [
+          {
+            "op": "identity"
+          }
+        ]
+      }
+    ],
+    "order_specs": [
+      {
+        "keys": [
+          {
+            "column": "g",
+            "dir": "asc"
+          },
+          {
+            "column": "v",
+            "dir": "asc"
+          }
+        ],
+        "null_order": "last",
+        "order_spec_id": "o1",
+        "tie_break": "rid"
+      }
+    ],
+    "output_columns": [
+      "g",
+      "agg_result"
+    ],
+    "primary_table": "t",
+    "status": "ready"
+  },
+  "tables": {
+    "t": {
+      "columns": [
+        "g",
+        "v",
+        "rid"
+      ],
+      "name": "t",
+      "rows": [
+        {
+          "g": "A",
+          "rid": "r2",
+          "v": "2"
+        },
+        {
+          "g": "A",
+          "rid": "r1",
+          "v": "1"
+        },
+        {
+          "g": "B",
+          "rid": "r3",
+          "v": "9"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "note": "Post-CURRENT-merge: enums/structure come from contracts/CURRENT (v1.9.0). This file keeps TEST-ONLY numeric overrides; production slots in CURRENT are null. Do not copy these numbers into CURRENT.",
+  "test_only_numeric_overrides": {
+    "complexity_bound_coeffs": {
+      "near_linear_rows": 1.0,
+      "near_linear_cells_or_rows": 1.0,
+      "declared_join": 1.0,
+      "stamp_window_declared": 1.0,
+      "nlogn_declared": 1.0,
+      "group_times_size": 1.0,
+      "near_linear_declared": 1.0
+    },
+    "query_exec_budget": {
+      "unit": "declared_cost_units",
+      "max_cost_per_step": 100000.0,
+      "max_cost_per_plan": 500000.0
+    },
+    "query_ask_budget": 24,
+    "query_replan_budget": 6,
+    "term_expand_domain_enum_cap": 64
+  },
+  "cleared_production_slots_in_CURRENT": [
+    "complexity_bound_coeffs.*",
+    "query_exec_budget.unit",
+    "query_exec_budget.max_cost_per_step",
+    "query_exec_budget.max_cost_per_plan",
+    "query_ask_budget",
+    "query_replan_budget",
+    "term_expand_domain_enum_cap"
+  ]
+}

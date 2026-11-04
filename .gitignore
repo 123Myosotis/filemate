@@ -1,0 +1,62 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.pytest_cache/
+.pytest_rt/
+.pytest_tmp*/
+.pytest_trace_tmp/
+.mypy_cache/
+.ruff_cache/
+
+# ---- 本地打包依赖 ----
+_vendor/
+
+# ---- IDE / OS ----
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# ---- 密钥 / 配置（config.example.json 除外）----
+config.json
+.env
+.env.*
+*.local
+web/memory_correction/.token
+
+# ---- 运行时数据 ----
+db/*.db
+db/*.db-*
+storage/*.json
+diagnostics/
+web/*/logs/
+*.log
+
+# ---- 私有数据（勿外发）----
+构建/
+刁难抽查/
+测试/
+零售抽查/
+冷链抽查/
+acceptance/
+data/
+公司私有数据_勿发布/
+
+# ---- 无关脚本（招聘爬虫）----
+scrape_*.py
+build_output.py
+
+# ---- 文档（本仓库只上传源码）----
+*.docx
+word_office_*.md
+
+# ---- 表格样本（测试夹具除外）----
+*.xlsx
+*.xls
+*.xlsm
+!tests/**/*.xlsx
+!fixtures/**/*.xlsx

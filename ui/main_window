@@ -1,0 +1,74 @@
+MainWindow (QMainWindow)
+├── 主分割器 (QSplitter, 水平)
+│   ├── 左侧区域 (QWidget)
+│   │   ├── Tab页 (QTabWidget) ← 包含多个聊天频道
+│   │   └── "+"按钮 (QPushButton) ← 添加新频道
+│   └── 右侧区域 (QSplitter, 垂直)
+│       ├── 文件管理器 (QTreeView) ← 显示文件树
+│       └── 操作日志 (QListWidget) ← 显示日志
+└── 底部栏 (QStatusBar)
+    ├── 输入框 (QLineEdit) ← 用户输入消息
+    └── 发送按钮 (QPushButton) ← 发送消息
+
+项目基本情况
+项目	内容
+项目名称	FileMate
+目前开发框架	PyQt6
+运行命令	python ui/main_window.py
+项目路径	C:\Users\12221\PycharmProjects\filemate
+当前阶段	主界面搭建阶段
+
+已经实现的功能
+功能类别	具体功能
+盘符显示	show_drives() 方法，遍历 A-Z 检测存在的驱动器
+导航工具栏	后退、前进、上级目录、刷新、视图切换按钮
+地址栏	可编辑下拉框，支持输入路径回车跳转和选择历史路径
+视图模式	图标模式（QListView）和列表模式（QTreeView），可切换
+右键菜单	打开、重命名、删除、复制、剪切、粘贴、属性、新建文件夹、全选
+双击事件	文件夹进入目录，文件用系统默认程序打开
+状态栏	显示文件/文件夹数量统计
+权限处理	捕获 PermissionError 并弹窗提示
+浏览历史	支持前进/后退导航
+跨平台	Windows 显示盘符，Linux/Mac 显示用户主目录
+
+主窗口布局
+区域	说明
+左侧对话区	多频道 Tab 栏 + 只读对话显示区 + 添加频道按钮
+右侧上方	文件管理器组件
+右侧下方	操作日志列表
+底部输入栏	输入框 + 发送按钮
+
+需求与改进方案
+需求 1：文件管理器只能读取 C 盘，无法读取其他盘符
+项目	内容
+问题描述​	文件管理器只能读取 C 盘文件，不能读取 D 盘、E 盘等其他盘符
+解决方案​	添加 show_drives() 方法，遍历 A-Z 所有字母检测存在的驱动器并显示
+关键技术点​	os.path.exists(drive) 检测盘符是否存在；shutil.disk_usage() 获取磁盘容量
+
+需求 2：运行报错 AttributeError: 'FileExplorer' object has no attribute 'init_ui'
+项目	内容
+问题描述​	添加 show_drives() 后运行报错，提示缺少 init_ui() 方法
+解决方案​	补全 init_ui() 方法，在其中完成工具栏、地址栏、视图模式、状态栏、数据模型的构建
+关键技术点​	QListView + QTreeView 共享 QStandardItemModel；QStackedWidget 切换视图
+
+需求 3：三个区域都要能调整大小
+项目	内容
+问题描述​	用户要求左侧对话区、右侧文件管理器、右侧操作日志三个区域都能通过拖拽调整大小
+解决方案​	使用双层 QSplitter 实现：
+1. 外层水平分割器（main_h_splitter）：左侧对话区 ↔ 右侧整体
+2. 内层垂直分割器（right_v_splitter）：文件管理器 ↔ 操作日志
+关键技术点​	QSplitter(Orientation.Horizontal) 水平分割；QSplitter(Orientation.Vertical) 垂直分割；setSizes() 设置初始分配比例
+
+需求 4（待修复）：左侧对话框无法调整大小，且只能左右调整不能上下调整
+项目	内容
+问题描述​	用户反馈左侧对话框"没能进行调整，而且只能左右调整，上下不能调整"
+当前状态​	⏳ 等待进一步修复​
+初步分析​	可能原因：
+1. 左侧面板内部缺少垂直分割器，导致对话区本身不可调整
+2. 用户可能期望左侧对话区也能上下拆分（如频道列表 + 对话内容）
+待确认问题​	需用户明确：
+1. 是希望左侧对话区内部能上下拖拽调整？
+2. 还是左侧整体无法拖拽改变宽度？
+
+
+

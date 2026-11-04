@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="x-memory-token" content="{{ token }}" />
+  <title>记忆纠错</title>
+  <link rel="stylesheet" href="/static/app.css" />
+  <script src="/static/htmx.min.js"></script>
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <div id="banner" class="banner" hidden role="status"></div>
+
+  <div class="page">
+    <header class="hero">
+      <p class="brand">记忆纠错</p>
+      <p class="lede">双引擎自学习 · 统一模型设置 · 确认前不落库</p>
+      <p class="note">仅监听 127.0.0.1 · 鉴权头 {{ token_header }} · 无 Cookie · MaiBot 库只读</p>
+      <button type="button" class="btn" id="btn-reload-lists">刷新</button>
+    </header>
+
+    <nav class="tabs" role="tablist" aria-label="主面板">
+      <button type="button" class="tab active" data-tab="dashboard" role="tab" aria-selected="true">记忆看板</button>
+      <button type="button" class="tab" data-tab="workspace" role="tab" aria-selected="false">工作台</button>
+      <button type="button" class="tab" data-tab="settings" role="tab" aria-selected="false">设置</button>
+    </nav>
+
+    <!-- ===== 记忆看板 ===== -->
+    <section class="tab-panel active" id="panel-dashboard" data-panel="dashboard" role="tabpanel">
+      <div class="dash-hero panel">
+        <p class="dash-engine" id="dash-engine-label">当前引擎：—</p>
+        <p class="muted" id="dash-engine-meta">加载中…</p>
+      </div>
+      <div class="layout-grid layout-grid-wide">
+        <section class="panel" aria-labelledby="dash-jobs-h">
+          <h2 id="dash-jobs-h">TXT 学习任务</h2>
+          <p class="hint">最近任务与推断计数（成功 / 失败）。</p>
+          <div id="dash-job-stats" class="list-host"><p class="empty">加载中…</p></div>
+          <div id="dash-jobs-list" class="list-host"></div>
+        </section>
+        <section class="panel" aria-labelledby="dash-inbox-h">
+          <h2 id="dash-inbox-h">待确认 / 冲突（合并）</h2>
+          <p class="hint">来源标签区分人工导入、对话复盘、冲突裁决等；确认前不落库。</p>
+          <div id="dash-inbox-list" class="list-host" data-list="dash-inbox">
+            <p class="empty">加载中…</p>
+          </div>
+        </section>
+        <section class="panel" aria-labelledby="dash-egress-h">
+          <h2 id="dash-egress-h">数据外带审计</h2>
+          <details class="egress-fold">
+            <summary>展开查看外发记录（已脱敏 Token）</summary>
+            <div id="dash-egress-list" class="list-host">
+              <p class="empty">加载中…</p>
+            </div>
+          </details>
+        </section>
+      </div>
+    </section>
+
+    <!-- ===== 工作台 ===== -->
+    <section class="tab-panel" id="panel-workspace" data-panel="workspace" role="tabpanel" hidden>
+      <details class="help panel">
+        <summary>简易帮助</summary>
+        <ol>
+          <li>在「设置」配置模型与自学习引擎（聊天 / 向量）。</li>
+          <li>「TXT 学习」上传文本；达阈值后双路推断，静默 / 冲突 / 待确认。</li>
+          <li>看板与本页均可确认提议、裁决冲突。</li>
+        </ol>
+      </details>
+      <div class="layout-grid layout-grid-wide" id="main-grid">
+        <section class="panel col-propose" aria-labelledby="propose-heading">
+          <h2 id="propose-heading">新建知识</h2>
+          <p class="hint">提议不写入，确认后才生效。</p>
+          <form id="propose-form" class="stack" novalidate>
+            <label>
+              <span class="label">业务术语</span>
+              <input name="term" id="wizard-term" autocomplete="off" placeholder="在此输入术语" />
+            </label>
+            <label>
+              <span class="label">术语描述 / 包含的值</span>
+              <textarea id="wizard-description" name="description" rows="4" placeholder="描述该术语含义或包含哪些说法"></textarea>
+            </label>
+            <label>
+              <span class="label">适用范围 / 场景（可选）</span>
+              <input name="scope_text" id="wizard-scope" autocomplete="off" placeholder="可选：适用范围或场景" />
+            </label>
+            <p class="hint emphasize">系统会记住这条知识，并在遇到相关表格时，由 AI 自动判断如何应用。</p>
+            <button type="submit" class="btn primary">提交修改提议</button>
+          </form>
+        </section>
+
+        <section class="panel col-txt" aria-labelledby="txt-heading">
+          <h2 id="txt-heading">TXT 学习（人工投喂）</h2>
+          <p class="hint">上传纯文本；分词统计词频后按阈值触发双路推断。扫盘自学习已废除。</p>
+          <form id="txt-form" class="stack" novalidate>
+            <label>
+              <span class="label">选择 .txt 文件</span>
+              <input type="file" id="txt-file" accept=".txt,text/plain" />
+            </label>
+            <button type="submit" class="btn primary">导入并学习</button>
+          </form>
+          <pre id="txt-result" class="result mini" hidden></pre>
+        </section>
+
+        <section class="panel col-dialogue" aria-labelledby="dialogue-heading">
+          <h2 id="dialogue-heading">对话复盘学习</h2>
+          <p class="hint">只记录对话文本（查询 / 回答 / 追问）。点「结束会话并复盘」后异步提取黑话，经去重门闸进待确认。</p>
+          <div class="stack">
+            <button type="button" class="btn" id="btn-dialogue-start">开始会话</button>
+            <p class="muted" id="dialogue-session-hint">尚未开始会话</p>
+            <label>
+              <span class="label">角色</span>
+              <select id="dialogue-role">
+                <option value="user">用户</option>
+                <option value="assistant">助手</option>
+              </select>
+            </label>
+            <label>
+              <span class="label">对话内容</span>
+              <textarea id="dialogue-content" rows="3" placeholder="粘贴本轮对话文本（禁止粘贴整表数据）"></textarea>
+            </label>
+            <div class="row-2">
+              <button type="button" class="btn" id="btn-dialogue-turn">追加一轮</button>
+              <button type="button" class="btn primary" id="btn-dialogue-end">结束会话并复盘</button>
+            </div>
+            <pre id="dialogue-result" class="result mini" hidden></pre>
+          </div>
+        </section>
+
+        <section class="panel col-mining" aria-labelledby="mining-heading">
+          <h2 id="mining-heading">黑话挖掘状态</h2>
+          <p class="hint">最近一次挖掘任务与计数摘要。</p>
+          <div id="mining-status" class="list-host">
+            <p class="empty">加载中…</p>
+          </div>
+        </section>
+
+        <section class="panel col-conflicts" aria-labelledby="conflicts-heading">
+          <h2 id="conflicts-heading">双库冲突裁决</h2>
+          <p class="hint">MaiBot 已有该词但含义冲突时，在此选择保留哪边或共存。</p>
+          <div id="conflicts-list" class="list-host" data-list="conflicts">
+            <p class="empty">加载中…</p>
+          </div>
+        </section>
+
+        <section class="panel col-proposals" aria-labelledby="proposals-heading">
+          <h2 id="proposals-heading">待确认提议</h2>
+          <p class="hint">点按钮即可，无需手填编号。</p>
+          <div id="proposals-list" class="list-host" data-list="proposals">
+            <p class="empty">加载中…</p>
+          </div>
+        </section>
+
+        <section class="panel col-bindings" aria-labelledby="bindings-heading">
+          <h2 id="bindings-heading">已生效知识</h2>
+          <p class="hint">展开可看术语、描述、场景与绑定编号；点撤销即可。</p>
+          <div class="filter-row">
+            <label class="inline-label">状态筛选
+              <select id="binding-filter">
+                <option value="all">全部</option>
+                <option value="active" selected>已生效（active）</option>
+                <option value="revoked">已撤销（revoked）</option>
+                <option value="invalidated">已失效（invalidated）</option>
+              </select>
+            </label>
+          </div>
+          <div id="bindings-list" class="list-host" data-list="bindings">
+            <p class="empty">加载中…</p>
+          </div>
+          <p class="hint">撤销后不可恢复。</p>
+        </section>
+
+        <section class="panel col-traces" aria-labelledby="traces-heading">
+          <h2 id="traces-heading">操作记录</h2>
+          <p class="hint">最近 {{ trace_limit }} 条；点「按记录回放」查看。</p>
+          <div id="traces-list" class="list-host" data-list="traces">
+            <p class="empty">加载中…</p>
+          </div>
+          <pre id="replay-result" class="result mini" hidden></pre>
+        </section>
+      </div>
+    </section>
+
+    <!-- ===== 设置 ===== -->
+    <section class="tab-panel" id="panel-settings" data-panel="settings" role="tabpanel" hidden>
+      <form id="settings-unified-form" class="stack settings-form" novalidate>
+        <section class="panel" aria-labelledby="set-model-h">
+          <h2 id="set-model-h">模型配置</h2>
+          <p class="hint">OpenAI 兼容协议（智谱 / DeepSeek 等均可改 Base URL）。</p>
+          <label>
+            <span class="label">聊天 Base URL</span>
+            <input name="api_base_url" id="set-api-base" autocomplete="off" placeholder="https://open.bigmodel.cn/api/paas/v4" />
+          </label>
+          <label>
+            <span class="label">API Key</span>
+            <input name="api_key" id="set-api-key" type="password" autocomplete="off" placeholder="留空不改；填新 Key 覆盖；输入清空键清除" />
+          </label>
+          <p class="muted" id="set-api-key-hint"></p>
+          <label>
+            <span class="label">聊天 Model Name</span>
+            <input name="api_model" id="set-api-model" autocomplete="off" placeholder="glm-4-flash" />
+          </label>
+        </section>
+
+        <section class="panel" aria-labelledby="set-dense-h">
+          <h2 id="set-dense-h">向量来源（三选一）</h2>
+          <p class="hint">
+            本地与外部向量<strong>不能同时开</strong>。关闭时只用 FTS+黑话，已填配置会保留但不生效。
+          </p>
+          <div id="migration-banner" class="field-warn" hidden role="status"></div>
+          <div id="migration-banner-actions" class="row-2" hidden>
+            <button type="button" class="btn" id="btn-mig-local">确认使用本地</button>
+            <button type="button" class="btn" id="btn-mig-external">改为外部</button>
+            <button type="button" class="btn" id="btn-mig-off">改为关闭</button>
+          </div>
+          <fieldset class="radio-row">
+            <legend class="label">向量来源</legend>
+            <label class="inline-label"><input type="radio" name="dense_provider" value="off" checked /> 关闭</label>
+            <label class="inline-label"><input type="radio" name="dense_provider" value="local" /> 本地模型</label>
+            <label class="inline-label"><input type="radio" name="dense_provider" value="external" /> 外部 API</label>
+          </fieldset>
+          <p class="hint" id="dense-off-hint" hidden>当前不启用向量，仅 FTS+黑话检索</p>
+          <div id="dense-local-panel" hidden>
+            <label>
+              <span class="label">本地向量模型路径</span>
+              <input name="embedded_model_path" id="set-embed-path" autocomplete="off" placeholder="本地 embedding 模型目录或文件" />
+            </label>
+          </div>
+          <div id="dense-external-panel" hidden>
+            <label>
+              <span class="label">Base URL</span>
+              <input name="ext_emb_base_url" id="set-ext-emb-base" autocomplete="off"
+                     placeholder="https://api.example.com/v1" />
+            </label>
+            <label>
+              <span class="label">Model</span>
+              <input name="ext_emb_model" id="set-ext-emb-model" autocomplete="off"
+                     placeholder="provider/model-id" />
+            </label>
+            <label>
+              <span class="label">API Key（只显示末 8 位）</span>
+              <input name="ext_emb_api_key" id="set-ext-emb-key" type="password" autocomplete="off"
+                     placeholder="留空保留；填新 Key 覆盖" />
+            </label>
+            <p class="muted" id="set-ext-emb-key-hint"></p>
+            <button type="button" class="btn" id="btn-clear-ext-key">清除 Key</button>
+            <label>
+              <span class="label">融合权重（≤0 视同关闭外部）</span>
+              <input name="ext_emb_weight" id="set-ext-emb-weight" type="number" step="0.01" min="0" value="0" />
+            </label>
+            <p class="muted" id="set-ext-emb-status"></p>
+          </div>
+        </section>
+
+        <section class="panel" aria-labelledby="set-mem-h">
+          <h2 id="set-mem-h">记忆库配置</h2>
+          <label>
+            <span class="label">MaiBot 数据目录（只读对接）</span>
+            <div class="path-picker-row">
+              <input name="maibot_data_dir" id="set-maibot-dir" autocomplete="off"
+                     placeholder="请点击右侧按钮选择 MaiBot 的 data 目录…" />
+              <button type="button" class="btn" id="btn-browse-maibot" title="浏览并选择文件夹">📁 浏览…</button>
+            </div>
+            <p class="field-warn" id="maibot-dir-warn" hidden>未找到数据库文件</p>
+          </label>
+          <fieldset class="radio-row">
+            <legend class="label">自学习引擎</legend>
+            <label class="inline-label"><input type="radio" name="self_learning_engine" value="chat" /> 聊天（MaiBot 模式）</label>
+            <label class="inline-label"><input type="radio" name="self_learning_engine" value="vector" /> 向量（本地模式）</label>
+          </fieldset>
+          <p class="hint" id="retrieval-engine-hint">
+            检索说明：<strong>无向量也能出结果</strong>（FTS + 黑话始终保留）。
+            向量来源在上方三选一（本地 XOR 外部，不可并行）。
+          </p>
+          <div class="row-2">
+            <label>
+              <span class="label">vector_weight</span>
+              <input name="vector_weight" id="set-vw" type="number" step="0.01" min="0" />
+            </label>
+            <label>
+              <span class="label">bm25_weight</span>
+              <input name="bm25_weight" id="set-bw" type="number" step="0.01" min="0" />
+            </label>
+          </div>
+        </section>
+
+        <section class="panel" aria-labelledby="set-learn-h">
+          <h2 id="set-learn-h">自学习配置</h2>
+          <label>
+            <span class="label">推断阈值（逗号分隔）</span>
+            <input name="jargon_inference_thresholds" id="set-thresholds" autocomplete="off" placeholder="4,8,25,100" />
+          </label>
+          <fieldset class="radio-row">
+            <legend class="label">语义等价判定（向量引擎最终步；聊天引擎始终 AI）</legend>
+            <label class="inline-label"><input type="radio" name="meaning_equivalence_mode" value="ai" /> AI 判定</label>
+            <label class="inline-label"><input type="radio" name="meaning_equivalence_mode" value="local" /> 本地字符串</label>
+          </fieldset>
+          <label class="inline-label">
+            <input type="checkbox" name="dialogue_review_enabled" id="set-dialogue-on" value="1" />
+            对话复盘学习
+          </label>
+          <fieldset class="radio-row">
+            <legend class="label">数据外带策略</legend>
+            <label class="inline-label"><input type="radio" name="egress_policy" value="allow_external" /> 允许外部模型</label>
+            <label class="inline-label"><input type="radio" name="egress_policy" value="local_only" /> 本地模式（禁止外传）</label>
+          </fieldset>
+        </section>
+
+        <button type="submit" class="btn primary">保存全部设置</button>
+        <p class="muted" id="settings-hint"></p>
+      </form>
+
+      <section class="panel danger-zone" aria-labelledby="set-purge-h">
+        <h2 id="set-purge-h">清空本机测试数据</h2>
+        <p class="hint">
+          一键清空 FileMate 本地记忆库（待确认提议、黑话、对话复盘、外带审计、绑定/FTS/向量缓存）。
+          <strong>不动 MaiBot</strong>；设置项保留。
+        </p>
+        <button type="button" class="btn danger" id="btn-purge-local">一键清空测试数据</button>
+        <p class="muted" id="purge-hint"></p>
+      </section>
+    </section>
+  </div>
+</body>
+</html>

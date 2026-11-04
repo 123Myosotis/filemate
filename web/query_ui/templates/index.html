@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="x-query-token" content="{{ token }}" />
+  <meta name="x-token-header" content="{{ token_header }}" />
+  <title>FileMate 查询</title>
+  <link rel="stylesheet" href="/static/app.css" />
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <div id="banner" class="banner" hidden role="status"></div>
+  <div class="page">
+    <header class="hero">
+      <p class="brand">FileMate 查询</p>
+      <p class="lede">自然语言跨表查询 · 五段确认 · 结果预览与导出</p>
+      <p class="note">仅监听 127.0.0.1 · 鉴权头 {{ token_header }} · 不落库业务密钥</p>
+    </header>
+
+    <section class="panel" aria-labelledby="ask-h">
+      <h2 id="ask-h">提问</h2>
+      <label class="stack">
+        <span class="label">自然语言问题</span>
+        <textarea id="utterance" rows="3" placeholder="输入要查的内容…"></textarea>
+      </label>
+      <div class="row-2" style="margin-top:0.75rem">
+        <label class="stack grow">
+          <span class="label">选择 Excel 文件（可多选）</span>
+          <input type="file" id="file-input" accept=".xlsx,.xlsm,.xls" multiple />
+        </label>
+        <div class="btn-col">
+          <button type="button" class="btn" id="btn-upload">上传文件</button>
+          <button type="button" class="btn primary" id="btn-run">开始查询</button>
+        </div>
+      </div>
+      <p class="muted" id="upload-hint">尚未上传文件</p>
+    </section>
+
+    <section class="panel" aria-labelledby="status-h" style="margin-top:1rem">
+      <h2 id="status-h">运行状态</h2>
+      <ol id="stage-list" class="stage-list">
+        <li class="muted">等待开始…</li>
+      </ol>
+      <p class="hint" id="slice-hint" hidden>正在分片处理（超大表 / 跨片绑定）</p>
+    </section>
+
+    <section class="panel" id="needs-user-panel" hidden aria-labelledby="nu-h" style="margin-top:1rem">
+      <h2 id="nu-h">需要你确认</h2>
+      <p class="hint">AI 无法单独定稿，请阅读五段说明后回答。</p>
+      <dl class="five-part" id="five-part"></dl>
+      <label class="stack" style="margin-top:0.75rem">
+        <span class="label">你的确认 / 纠正</span>
+        <textarea id="user-reply" rows="3" placeholder="确认或补充信息…"></textarea>
+      </label>
+      <button type="button" class="btn primary" id="btn-reply" style="margin-top:0.6rem">提交回答并继续</button>
+    </section>
+
+    <section class="panel" id="result-panel" hidden aria-labelledby="res-h" style="margin-top:1rem">
+      <div class="result-head">
+        <h2 id="res-h">结果预览</h2>
+        <a class="btn primary" id="btn-export" href="#" hidden>导出 Excel</a>
+      </div>
+      <p class="muted" id="result-meta"></p>
+      <div class="table-wrap">
+        <table id="result-table">
+          <thead></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <details class="plan-fold">
+        <summary>计划摘要</summary>
+        <pre id="plan-summary" class="result mini"></pre>
+      </details>
+    </section>
+  </div>
+</body>
+</html>

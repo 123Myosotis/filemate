@@ -1,0 +1,6 @@
+{
+  "status": "ready",
+  "primary_table": "t",
+  "contract_version": "v1.1.0",
+  "ops": [{"op": "project", "project_ref": "p1"}]
+}

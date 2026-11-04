@@ -1,0 +1,18 @@
+{
+  "t0": {
+    "columns": ["c_key", "c_flag", "c_ts", "c_score"],
+    "rows": [
+      {"c_key": "k1", "c_flag": "yes", "c_ts": 5, "c_score": 3},
+      {"c_key": "k1", "c_flag": "yes", "c_ts": 8, "c_score": 9},
+      {"c_key": "k2", "c_flag": "no", "c_ts": 4, "c_score": 1},
+      {"c_key": "k2", "c_flag": "yes", "c_ts": 6, "c_score": 4}
+    ]
+  },
+  "t1": {
+    "columns": ["c_key", "c_attr"],
+    "rows": [
+      {"c_key": "k1", "c_attr": "a1"},
+      {"c_key": "k2", "c_attr": "a2"}
+    ]
+  }
+}

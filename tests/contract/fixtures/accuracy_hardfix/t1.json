@@ -1,0 +1,124 @@
+{
+  "plan": {
+    "empty_token_maps": [
+      {
+        "candidates": [
+          "",
+          "未知",
+          "不适用",
+          "N/A",
+          "n/a"
+        ],
+        "column": "k",
+        "map_id": "em_L_left_k",
+        "mapping": [
+          {
+            "enum": "vacant",
+            "raw": ""
+          },
+          {
+            "enum": "unknown",
+            "raw": "未知"
+          },
+          {
+            "enum": "na",
+            "raw": "不适用"
+          }
+        ],
+        "side": "left",
+        "source_table": "L"
+      },
+      {
+        "candidates": [
+          "",
+          "未知",
+          "不适用",
+          "N/A",
+          "n/a"
+        ],
+        "column": "k",
+        "map_id": "em_R_right_k",
+        "mapping": [
+          {
+            "enum": "vacant",
+            "raw": ""
+          },
+          {
+            "enum": "unknown",
+            "raw": "未知"
+          },
+          {
+            "enum": "na",
+            "raw": "不适用"
+          }
+        ],
+        "shared_map_id": "em_L_left_k",
+        "side": "right",
+        "source_table": "R"
+      }
+    ],
+    "joins": [
+      {
+        "how": "left",
+        "key_norm_id": "kn_id",
+        "left_column": "k",
+        "right_column": "k",
+        "right_table": "R"
+      }
+    ],
+    "norm_specs": [
+      {
+        "idempotent": true,
+        "norm_id": "kn_id",
+        "steps": [
+          {
+            "op": "identity"
+          }
+        ]
+      }
+    ],
+    "output_columns": [
+      "k",
+      "v",
+      "x"
+    ],
+    "primary_table": "L",
+    "status": "ready"
+  },
+  "tables": {
+    "L": {
+      "columns": [
+        "k",
+        "v"
+      ],
+      "name": "L",
+      "rows": [
+        {
+          "k": " 1",
+          "v": "a"
+        },
+        {
+          "k": "2",
+          "v": "b"
+        }
+      ]
+    },
+    "R": {
+      "columns": [
+        "k",
+        "x"
+      ],
+      "name": "R",
+      "rows": [
+        {
+          "k": "1",
+          "x": "X"
+        },
+        {
+          "k": "2",
+          "x": "Y"
+        }
+      ]
+    }
+  }
+}

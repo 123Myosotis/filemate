@@ -1,0 +1,203 @@
+{
+  "note": "B6a test-only ConfirmedSemanticBinding fixtures. Not for CURRENT/production. Values are runtime table literals from real sheets for acceptance only.",
+  "f2_authorized": true,
+  "bindings": [
+    {
+      "binding_id": "b6a_site_xihe",
+      "utterance_span_fingerprint": "site_map_xihe",
+      "confirmed_at": "2026-10-21T00:00:00Z",
+      "binding_payload": {
+        "kind": "site_name_align",
+        "align_column": "_b6a_align",
+        "canonical": "西河",
+        "literals": {
+          "event_record": ["110kV西河变电站"],
+          "location": ["西河站"],
+          "entity": ["西河站"],
+          "org": ["西河站"]
+        },
+        "predicate_tree": {
+          "node_kind": "OR",
+          "children": [
+            {"node_kind": "ATOM", "atom": {"side": "event_record", "column": "站点", "cmp": "eq", "value": "110kV西河变电站"}},
+            {"node_kind": "ATOM", "atom": {"side": "location", "column": "站点", "cmp": "eq", "value": "西河站"}}
+          ]
+        }
+      }
+    },
+    {
+      "binding_id": "b6a_site_daoguan",
+      "utterance_span_fingerprint": "site_map_daoguan",
+      "confirmed_at": "2026-10-21T00:00:00Z",
+      "binding_payload": {
+        "kind": "site_name_align",
+        "align_column": "_b6a_align",
+        "canonical": "道冠",
+        "literals": {
+          "event_record": ["110kV道冠变电站"],
+          "location": ["道冠站"],
+          "entity": ["道冠站"],
+          "org": ["道冠站"]
+        },
+        "predicate_tree": {
+          "node_kind": "ATOM",
+          "atom": {"align": "道冠"}
+        }
+      }
+    },
+    {
+      "binding_id": "b6a_site_beimen",
+      "utterance_span_fingerprint": "site_map_beimen",
+      "confirmed_at": "2026-10-21T00:00:00Z",
+      "binding_payload": {
+        "kind": "site_name_align",
+        "align_column": "_b6a_align",
+        "canonical": "北门",
+        "literals": {
+          "event_record": ["110kV北门变电站"],
+          "location": ["北门站"],
+          "entity": ["北门站"],
+          "org": ["北门站"]
+        },
+        "predicate_tree": {
+          "node_kind": "ATOM",
+          "atom": {"align": "北门"}
+        }
+      }
+    },
+    {
+      "binding_id": "b6a_site_leyuan",
+      "utterance_span_fingerprint": "site_map_leyuan",
+      "confirmed_at": "2026-10-21T00:00:00Z",
+      "binding_payload": {
+        "kind": "site_name_align",
+        "align_column": "_b6a_align",
+        "canonical": "乐园",
+        "literals": {
+          "event_record": ["110kV乐园变电站"],
+          "location": ["乐园站"],
+          "entity": ["乐园站"],
+          "org": ["乐园站"]
+        },
+        "predicate_tree": {
+          "node_kind": "ATOM",
+          "atom": {"align": "乐园"}
+        }
+      }
+    },
+    {
+      "binding_id": "b6a_term_sec_plane",
+      "utterance_span_fingerprint": "term_expand_sec_plane",
+      "confirmed_at": "2026-10-21T00:00:00Z",
+      "binding_payload": {
+        "kind": "term_expand",
+        "confirmed_column_ids": ["col:设备子类型", "col:端口范围", "col:任务状态"],
+        "predicate_tree": {
+          "node_kind": "AND",
+          "children": [
+            {
+              "node_kind": "OR",
+              "children": [
+                {"node_kind": "ATOM", "atom": {"column_id": "设备子类型", "cmp": "eq", "value": "交换机"}},
+                {"node_kind": "ATOM", "atom": {"column_id": "设备子类型", "cmp": "eq", "value": "防火墙"}},
+                {"node_kind": "ATOM", "atom": {"column_id": "设备名称", "cmp": "contains", "value": "态势"}}
+              ]
+            },
+            {
+              "node_kind": "OR",
+              "children": [
+                {"node_kind": "ATOM", "atom": {"column_id": "端口范围", "cmp": "eq", "value": "常用端口TOP50"}},
+                {"node_kind": "ATOM", "atom": {"column_id": "端口范围", "cmp": "eq", "value": "自定义端口"}}
+              ]
+            },
+            {
+              "node_kind": "ATOM",
+              "atom": {"column_id": "任务状态", "cmp": "eq", "value": "成功"}
+            }
+          ]
+        }
+      }
+    },
+    {
+      "binding_id": "b6a_hw_c1_date",
+      "utterance_span_fingerprint": "hw_c1_date",
+      "confirmed_at": "2026-10-21T00:00:00Z",
+      "binding_payload": {
+        "kind": "hw_critical_column",
+        "c1_class": "time_axis_date_layer",
+        "confirmed_column_ids": ["hw:date_axis"],
+        "source_locator": {"row": 2, "col_start": 4},
+        "value_domain": "excel_serial_day",
+        "granularity": "day",
+        "hierarchy": "date>shift"
+      }
+    },
+    {
+      "binding_id": "b6a_hw_c2_shift",
+      "utterance_span_fingerprint": "hw_c2_shift",
+      "confirmed_at": "2026-10-21T00:00:00Z",
+      "binding_payload": {
+        "kind": "hw_critical_column",
+        "c1_class": "time_axis_shift_or_slot_layer",
+        "confirmed_column_ids": ["hw:shift_axis"],
+        "source_locator": {"col": 3, "label_contains": "班"},
+        "granularity": "shift",
+        "hierarchy": "date>shift"
+      }
+    },
+    {
+      "binding_id": "b6a_hw_c3_interval",
+      "utterance_span_fingerprint": "hw_c3_interval",
+      "confirmed_at": "2026-10-21T00:00:00Z",
+      "binding_payload": {
+        "kind": "hw_critical_column",
+        "c1_class": "interval_start_end",
+        "confirmed_column_ids": ["hw:interval_text"],
+        "source_locator": {"col": 3}
+      }
+    },
+    {
+      "binding_id": "b6a_hw_c4_result",
+      "utterance_span_fingerprint": "hw_c4_result",
+      "confirmed_at": "2026-10-21T00:00:00Z",
+      "binding_payload": {
+        "kind": "hw_critical_column",
+        "c1_class": "window_result_column",
+        "confirmed_column_ids": ["hw:duty_person"],
+        "source_locator": {"cell_under_date_and_shift": true}
+      }
+    },
+    {
+      "binding_id": "b6a_hw_c5_align",
+      "utterance_span_fingerprint": "hw_c5_align",
+      "confirmed_at": "2026-10-21T00:00:00Z",
+      "binding_payload": {
+        "kind": "hw_critical_column",
+        "c1_class": "cross_table_align_key",
+        "confirmed_column_ids": ["hw:day_index", "event:scan_day_index"],
+        "align_pair": ["_b6a_day", "_b6a_day"]
+      }
+    },
+    {
+      "binding_id": "b6a_hw_c6_term",
+      "utterance_span_fingerprint": "hw_c6_term",
+      "confirmed_at": "2026-10-21T00:00:00Z",
+      "binding_payload": {
+        "kind": "hw_critical_column",
+        "c1_class": "term_expand_target_column",
+        "confirmed_column_ids": ["col:端口范围"]
+      }
+    },
+    {
+      "binding_id": "b6a_event_time_col",
+      "utterance_span_fingerprint": "event_stamp",
+      "confirmed_at": "2026-10-21T00:00:00Z",
+      "binding_payload": {
+        "kind": "event_stamp_column",
+        "confirmed_column_ids": ["col:任务扫描开始时间"],
+        "stamp_column": "任务扫描开始时间",
+        "day_align_column": "_b6a_day"
+      }
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "note": "TEST-ONLY numeric overrides for memory_rag M2/M3 (测试覆盖值、非生产默认). Do not copy into contracts/CURRENT. Production slots remain null until CURRENT merge batch.",
+  "test_only_numeric_overrides": {
+    "memory_recall_top_k": 10,
+    "embedding_dim": 1536,
+    "external_api_endpoint_allowlist": [],
+    "memory_external_call_count_cap": 5000,
+    "memory_external_call_timeout_ms": 30000,
+    "memory_external_call_max_retries": 2
+  },
+  "cleared_production_slots_policy": [
+    "memory_recall_top_k",
+    "embedding_dim",
+    "embedded_model_id",
+    "external_api_endpoint_allowlist",
+    "memory_external_call_count_cap",
+    "memory_external_call_timeout_ms",
+    "memory_external_call_max_retries"
+  ]
+}

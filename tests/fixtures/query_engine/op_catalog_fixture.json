@@ -1,0 +1,93 @@
+{
+  "operators": {
+    "op_filter": {
+      "op_id": "op_filter",
+      "params_schema": {"type": "object"},
+      "in_types": ["table"],
+      "out_types": ["table"],
+      "complexity_bound": {"class": "near_linear_rows"},
+      "description": "table filter via condition tree"
+    },
+    "op_join": {
+      "op_id": "op_join",
+      "params_schema": {"type": "object"},
+      "in_types": ["table", "table"],
+      "out_types": ["table"],
+      "complexity_bound": {"class": "declared_join"},
+      "description": "multi-table equi-join"
+    },
+    "op_stamp_window": {
+      "op_id": "op_stamp_window",
+      "params_schema": {"type": "object"},
+      "in_types": ["table", "interval"],
+      "out_types": ["table"],
+      "complexity_bound": {"class": "stamp_window_declared"},
+      "description": "stamp-window match; optional second input = interval/roster rows for range join"
+    },
+    "op_interval_build": {
+      "op_id": "op_interval_build",
+      "params_schema": {"type": "object"},
+      "in_types": ["interval_desc", "table"],
+      "out_types": ["interval", "table"],
+      "complexity_bound": {"class": "near_linear_cells_or_rows"},
+      "description": "interval construction from AI interval desc or table start/end columns"
+    },
+    "op_derive": {
+      "op_id": "op_derive",
+      "params_schema": {"type": "object"},
+      "in_types": ["table"],
+      "out_types": ["table"],
+      "complexity_bound": {"class": "near_linear_rows"},
+      "description": "derived column via expression tree"
+    },
+    "op_set_ops": {
+      "op_id": "op_set_ops",
+      "params_schema": {"type": "object"},
+      "in_types": ["table", "table"],
+      "out_types": ["table"],
+      "complexity_bound": {"class": "near_linear_declared"},
+      "description": "set ops on equality basis"
+    },
+    "op_exists_any": {
+      "op_id": "op_exists_any",
+      "params_schema": {"type": "object"},
+      "in_types": ["table"],
+      "out_types": ["scalar"],
+      "complexity_bound": {"class": "near_linear_rows"},
+      "description": "condition eval with EXISTS/ANY"
+    },
+    "op_aggregate": {
+      "op_id": "op_aggregate",
+      "params_schema": {"type": "object"},
+      "in_types": ["table"],
+      "out_types": ["table"],
+      "complexity_bound": {"class": "near_linear_rows"},
+      "description": "aggregate"
+    },
+    "op_sort_truncate": {
+      "op_id": "op_sort_truncate",
+      "params_schema": {"type": "object"},
+      "in_types": ["table"],
+      "out_types": ["table"],
+      "complexity_bound": {"class": "nlogn_declared"},
+      "description": "global sort then truncate; not group-latest alone",
+      "forbids_as_group_latest": true
+    },
+    "op_group_top_k": {
+      "op_id": "op_group_top_k",
+      "params_schema": {"type": "object"},
+      "in_types": ["table"],
+      "out_types": ["table"],
+      "complexity_bound": {"class": "group_times_size"},
+      "description": "GroupTopK per-group top-k"
+    },
+    "op_arg_extremum": {
+      "op_id": "op_arg_extremum",
+      "params_schema": {"type": "object"},
+      "in_types": ["table"],
+      "out_types": ["table"],
+      "complexity_bound": {"class": "group_times_size"},
+      "description": "ArgExtremum per-group extremum row"
+    }
+  }
+}

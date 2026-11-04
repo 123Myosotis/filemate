@@ -1,0 +1,68 @@
+{
+  "plan": {
+    "empty_token_maps": [
+      {
+        "candidates": [
+          "",
+          "未知",
+          "不适用",
+          "N/A",
+          "n/a"
+        ],
+        "column": "k",
+        "map_id": "em_t_na_k",
+        "mapping": [
+          {
+            "enum": "vacant",
+            "raw": ""
+          },
+          {
+            "enum": "unknown",
+            "raw": "未知"
+          },
+          {
+            "enum": "na",
+            "raw": "不适用"
+          }
+        ],
+        "source_table": "t"
+      }
+    ],
+    "keep_row_when": [
+      {
+        "column": "k",
+        "op": "eq",
+        "value": "x"
+      }
+    ],
+    "norm_specs": [
+      {
+        "idempotent": true,
+        "norm_id": "kn_id",
+        "steps": [
+          {
+            "op": "identity"
+          }
+        ]
+      }
+    ],
+    "output_columns": [
+      "k"
+    ],
+    "primary_table": "t",
+    "status": "ready"
+  },
+  "tables": {
+    "t": {
+      "columns": [
+        "k"
+      ],
+      "name": "t",
+      "rows": [
+        {
+          "k": "N/A"
+        }
+      ]
+    }
+  }
+}

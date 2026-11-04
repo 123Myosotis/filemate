@@ -1,0 +1,64 @@
+{
+  "rows": [
+    {
+      "demand_point": "d_filter",
+      "step_id": "s_filter",
+      "column_or_filter": "c_flag",
+      "utterance_span": "span_filter"
+    },
+    {
+      "demand_point": "d_join",
+      "step_id": "s_join",
+      "column_or_filter": "c_key",
+      "utterance_span": "span_join"
+    },
+    {
+      "demand_point": "d_win_a",
+      "step_id": "s_win_a",
+      "column_or_filter": "c_ts",
+      "utterance_span": "span_win_a"
+    },
+    {
+      "demand_point": "d_win_b",
+      "step_id": "s_win_b",
+      "column_or_filter": "c_ts",
+      "utterance_span": "span_win_b"
+    },
+    {
+      "demand_point": "d_exist",
+      "step_id": "s_exists",
+      "column_or_filter": "exists_flag",
+      "utterance_span": "span_exist"
+    },
+    {
+      "demand_point": "d_h",
+      "step_id": "s_topk",
+      "column_or_filter": "c_score",
+      "utterance_span": "span_h"
+    },
+    {
+      "demand_point": "d_arg",
+      "step_id": "s_arg",
+      "column_or_filter": "c_score",
+      "utterance_span": "span_arg"
+    },
+    {
+      "demand_point": "d_derive",
+      "step_id": "s_derive",
+      "column_or_filter": "c_mark",
+      "utterance_span": "span_derive"
+    },
+    {
+      "demand_point": "d_proj",
+      "step_id": "s_derive",
+      "column_or_filter": "c_mark",
+      "utterance_span": "span_proj"
+    },
+    {
+      "demand_point": "d_proj_key",
+      "step_id": "s_join",
+      "column_or_filter": "c_key",
+      "utterance_span": "span_proj_key"
+    }
+  ]
+}
