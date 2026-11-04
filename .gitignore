@@ -60,3 +60,6 @@ word_office_*.md
 *.xlsm
 !tests/**/*.xlsx
 !fixtures/**/*.xlsx
+
+# ---- 本地 git 备份 ----
+.git.bak/
