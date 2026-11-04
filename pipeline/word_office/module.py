@@ -54,42 +54,49 @@ def _audit(event: dict) -> None:
 # ---------------------------------------------------------------
 
 
-def _count_runs(path: Path, needle: str) -> int:
-    if not needle:
-        return 0
-    doc = Document(str(path))
-    n = 0
+_W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+_XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
+
+
+def _iter_paragraphs(doc):
     for p in doc.paragraphs:
-        for r in p.runs:
-            n += r.text.count(needle)
+        yield p
     for t in doc.tables:
         for row in t.rows:
             for cell in row.cells:
                 for p in cell.paragraphs:
-                    for r in p.runs:
-                        n += r.text.count(needle)
-    return n
+                    yield p
 
 
-def _replace_runs(doc, find: str, repl: str) -> int:
-    """在 run 级替换（保留格式）；跨 run 的字符串替换不到，如实报告。"""
-    n = 0
+def _replace(doc, find: str, repl: str) -> tuple[int, int]:
+    """先 run 级（保格式）；跨 run 的再段落级合并（会丢该段内部行内格式）。
 
-    def _do(runs):
-        nonlocal n
-        for r in runs:
+    返回 `(run_level_count, paragraph_level_count)`，让调用方如实报告。
+    """
+    n_run = 0
+    n_para = 0
+    for p in _iter_paragraphs(doc):
+        hit = False
+        for r in p.runs:
             if find in r.text:
                 r.text = r.text.replace(find, repl)
-                n += 1
-
-    for p in doc.paragraphs:
-        _do(p.runs)
-    for t in doc.tables:
-        for row in t.rows:
-            for cell in row.cells:
-                for p in cell.paragraphs:
-                    _do(p.runs)
-    return n
+                n_run += 1
+                hit = True
+        if hit:
+            continue
+        ts = p._p.findall(".//" + _W + "t")
+        if not ts:
+            continue
+        whole = "".join(t.text or "" for t in ts)
+        if find not in whole:
+            continue
+        new = whole.replace(find, repl)
+        ts[0].text = new
+        ts[0].set(_XML_SPACE, "preserve")
+        for t in ts[1:]:
+            t.text = ""
+        n_para += whole.count(find)
+    return n_run, n_para
 
 
 def _inspect_msg(state: dict, preds: dict) -> str:
@@ -110,10 +117,20 @@ def _inspect_msg(state: dict, preds: dict) -> str:
     )
 
 
+_REPLACE_PATTERNS = (
+    re.compile(r"(?:把|将)\s*(.+?)\s*(?:替换成|替换为|改成|改为|换成|换为)\s*(.+?)(?:[。，,；;]|$)"),
+    re.compile(r"(.+?)\s*(?:替换成|替换为|改成|改为|换成|换为)\s*(.+?)(?:[。，,；;]|$)"),
+)
+
+
 def _plan_ops(text: str) -> list:
-    m = re.search(r"(?:把|将)\s*(.+?)\s*(?:替换成|改成|改为|换成)\s*(.+?)(?:[。，,；;]|$)", text)
-    if m:
-        return [{"op": "find_replace", "find": m.group(1).strip(), "replace": m.group(2).strip()}]
+    for pat in _REPLACE_PATTERNS:
+        m = pat.search(text)
+        if m:
+            find = m.group(1).strip().strip("「」\"' ")
+            repl = m.group(2).strip().strip("「」\"' ")
+            if find and find != repl:
+                return [{"op": "find_replace", "find": find, "replace": repl}]
     return [{"op": "inspect"}]
 
 
@@ -167,6 +184,18 @@ def _fail(reason: str, message: str) -> dict:
             "plan_ref": None, "audit_ref": None, "user_actions": []}
 
 
+def _count_all(path: Path, needle: str) -> int:
+    """按「段落内所有 w:t 拼接」计数，覆盖跨 run 的情况。"""
+    if not needle:
+        return 0
+    doc = Document(str(path))
+    n = 0
+    for p in _iter_paragraphs(doc):
+        ts = p._p.findall(".//" + _W + "t")
+        n += "".join(t.text or "" for t in ts).count(needle)
+    return n
+
+
 def _execute(target: Path, state: dict, preds: dict, plan: dict) -> dict:
     op = (plan["operations"] or [{"op": "inspect"}])[0]
     if op["op"] == "inspect":
@@ -175,21 +204,21 @@ def _execute(target: Path, state: dict, preds: dict, plan: dict) -> dict:
                 "plan_ref": None, "audit_ref": None, "user_actions": []}
 
     find, repl = op.get("find", ""), op.get("replace", "")
-    before = _count_runs(target, find)
+    before = _count_all(target, find)
     if before == 0:
-        return _fail("not_found", "文档里没找到「%s」（可能跨 run 断开了）。" % find)
+        return _fail("not_found", "文档里没找到「%s」。" % find)
 
     backup = target.with_suffix(target.suffix + ".bak")
     shutil.copy2(target, backup)
     doc = Document(str(target))
-    changed = _replace_runs(doc, find, repl)
+    n_run, n_para = _replace(doc, find, repl)
     doc.save(str(target))
 
-    after_find = _count_runs(target, find)
-    if after_find != 0:
+    if _count_all(target, find) != 0:
         shutil.copy2(backup, target)
         return _fail("verify_failed", "替换后仍有残留，已恢复原文件。")
+    note = "（其中 %d 处跨 run，已合并该段内部行内格式）" % n_para if n_para else ""
     return {"status": "done", "reason": "find_replace",
-            "message": "✅ 已替换 %d 处「%s」→「%s」（写前备份：%s）。"
-                       % (changed, find, repl, backup.name),
+            "message": "✅ 已替换 %d 处「%s」→「%s」%s（写前备份：%s）。"
+                       % (n_run + n_para, find, repl, note, backup.name),
             "plan_ref": None, "audit_ref": None, "user_actions": []}
