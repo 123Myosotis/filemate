@@ -71,3 +71,45 @@ def test_no_docx():
     r = WordModule.handle({"user_input": "检查结构", "selected_files": ["a.xlsx"]})
     assert r["status"] == "failed"
     assert r["reason"] == "no_docx"
+
+
+# ---- L1：AI 建议 + 本地执行 + 校验（mock 掉 LLM） ----
+
+def test_l1_replace(docx, monkeypatch):
+    import config
+    import pipeline.word_office.ai as ai
+
+    monkeypatch.setattr(ai, "call_l1", lambda *a, **k: {
+        "summary": "统一命名",
+        "ops": [{"find": "A型机", "replace": "C型机"}]})
+    monkeypatch.setattr(config, "get_api_key", lambda: "k")
+    r = WordModule.handle({"user_input": "帮我润色一下", "selected_files": [str(docx)]})
+    assert r["status"] == "done"
+    assert "已按 AI 建议修改" in r["message"]
+    text = "\n".join(p.text for p in Document(str(docx)).paragraphs)
+    assert "A型机" not in text
+    assert "C型机" in text
+
+
+def test_l1_suggest(docx, monkeypatch):
+    import config
+    import pipeline.word_office.ai as ai
+
+    monkeypatch.setattr(ai, "call_l1", lambda *a, **k: {
+        "summary": "这是一份设备台账。", "ops": []})
+    monkeypatch.setattr(config, "get_api_key", lambda: "k")
+    r = WordModule.handle({"user_input": "给个摘要", "selected_files": [str(docx)]})
+    assert r["status"] == "done"
+    assert "💡" in r["message"]
+
+
+def test_l1_not_found(docx, monkeypatch):
+    import config
+    import pipeline.word_office.ai as ai
+
+    monkeypatch.setattr(ai, "call_l1", lambda *a, **k: {
+        "summary": "x", "ops": [{"find": "不存在的文本", "replace": "X"}]})
+    monkeypatch.setattr(config, "get_api_key", lambda: "k")
+    r = WordModule.handle({"user_input": "润色", "selected_files": [str(docx)]})
+    assert r["status"] == "failed"
+    assert r["reason"] == "not_found"

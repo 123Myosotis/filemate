@@ -12,6 +12,7 @@ from pathlib import Path
 
 from docx import Document
 
+import config
 from .state import is_clean, predicates, scan
 
 # ---------------------------------------------------------------
@@ -19,8 +20,13 @@ from .state import is_clean, predicates, scan
 # ---------------------------------------------------------------
 
 
+_L1_HINTS = ("校对", "错别字", "润色", "改写", "摘要", "总结", "标记", "术语", "建议")
+
+
 def _decide_tier(text: str, state: dict, preds: dict) -> str:
-    """决策表占位：现在只判 L0（确定性），后续换规则表。"""
+    """决策表占位：先按用户词判 L1，其余 L0；后续换规则表。"""
+    if any(h in str(text or "") for h in _L1_HINTS):
+        return "L1"
     return "L0"
 
 
@@ -167,16 +173,88 @@ class WordModule:
                 "needs_confirmation",
                 "这份文档有结构风险（%s），L0 不静默执行。" % "、".join(dirty))
 
-        plan = {"tier": tier, "operations": _plan_ops(text)}
+        plan = {"tier": tier,
+                "operations": [{"op": "l1"}] if tier == "L1" else _plan_ops(text)}
         plan = _apply_overlay(plan)
         pre = _preflight(plan)
         if not pre.get("ok"):
             return _fail("preflight", str(pre.get("reason") or "预检未通过"))
 
-        result = _execute(target, state, preds, plan)
+        if tier == "L1":
+            result = _exec_l1(target, state, preds, text)
+        else:
+            result = _execute(target, state, preds, plan)
         _audit({"path": str(target), "tier": tier, "ops": len(plan["operations"]),
                 "status": result.get("status")})
         return result
+
+
+def _portrait(target: Path, state: dict, limit: int = 30) -> str:
+    """文档画像：段落数 + 标题样式 + 前 N 段正文（轻量，不传全文）。"""
+    doc = Document(str(target))
+    paras = [p.text.strip() for p in doc.paragraphs if p.text.strip()][:limit]
+    heads = [k for k in state["styles"] if "Heading" in k or k == "Title"]
+    return "段落数 %d；标题样式：%s\n正文前 %d 段：\n%s" % (
+        state["paragraphs"], "、".join(heads) or "无", len(paras),
+        "\n".join("- " + p[:200] for p in paras))
+
+
+def _exec_l1(target: Path, state: dict, preds: dict, user_input: str) -> dict:
+    """L1：AI 只出 {summary, ops:[{find,replace}]}；本地白名单 + 备份 + 结构校验 + 内容对账。"""
+    api_key = config.get_api_key()
+    if not api_key:
+        return _fail("no_key", "L1 需要 API Key，请先在设置里配置。")
+    from .ai import call_l1
+
+    data = call_l1(user_input, _portrait(target, state), api_key)
+    if not isinstance(data, dict):
+        return _fail("ai_failed", "AI 没有返回可用结果。")
+
+    summary = str(data.get("summary") or "").strip()
+    ops = []
+    for o in (data.get("ops") or []):
+        if not isinstance(o, dict):
+            continue
+        find = str(o.get("find") or "").strip()
+        repl = str(o.get("replace") or "").strip()
+        if find and find != repl:
+            ops.append({"find": find, "replace": repl,
+                        "reason": str(o.get("reason") or "")})
+    if not ops:
+        return {"status": "done", "reason": "suggest",
+                "message": "💡 " + (summary or "AI 没有给出可执行的修改。"),
+                "plan_ref": None, "audit_ref": None, "user_actions": []}
+
+    backup = target.with_suffix(target.suffix + ".bak")
+    shutil.copy2(target, backup)
+    doc = Document(str(target))
+    n_run_total = 0
+    n_para_total = 0
+    for op in ops:
+        nr, np = _replace(doc, op["find"], op["replace"])
+        n_run_total += nr
+        n_para_total += np
+    if n_run_total == 0 and n_para_total == 0:
+        return _fail("not_found", "AI 给的修改在文档里一处都没找到，未写入。")
+    doc.save(str(target))
+
+    after = scan(target)
+    if (after["paragraphs"] != state["paragraphs"]
+            or after["styles"] != state["styles"]
+            or after["tables"] != state["tables"]):
+        shutil.copy2(backup, target)
+        return _fail("verify_failed", "修改改变了文档结构，已恢复原文件。")
+    for op in ops:
+        if _count_all(target, op["find"]) != 0:
+            shutil.copy2(backup, target)
+            return _fail("verify_failed", "有修改未生效或残留，已恢复原文件。")
+
+    note = "（其中 %d 处跨 run，已合并该段内部行内格式）" % n_para_total if n_para_total else ""
+    tail = ("\nAI 说明：" + summary) if summary else ""
+    return {"status": "done", "reason": "l1_replace",
+            "message": "✅ 已按 AI 建议修改 %d 处%s（写前备份：%s）。%s"
+                       % (n_run_total + n_para_total, note, backup.name, tail),
+            "plan_ref": None, "audit_ref": None, "user_actions": []}
 
 
 def _fail(reason: str, message: str) -> dict:
