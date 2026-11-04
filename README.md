@@ -22,21 +22,32 @@ pip install -r requirements.txt
 
 ## 配置
 
-**推荐：启动后在「设置 → 聊天模型设置」里填 Base URL / Model / API Key**，会写入本地 `config.json`（已被 `.gitignore` 忽略，不会上传）。
+**推荐：启动后在「设置 → 聊天模型设置 / 记忆·向量设置」里填**，会写入本地 `config.json`（已被 `.gitignore` 忽略，不会上传）。
 
-也可以手动在项目根建 `config.json`：
+系统有**两个 API**，可以同一家，也可以不同家：
+
+| 用途 | 配置项 | 说明 |
+|---|---|---|
+| **聊天模型**（生成/推理） | `api_key` + `params.api.base_url` + `params.api.model` | 如 DeepSeek |
+| **语义识别**（embedding，**可选**） | `params.external_embedding.api_key` + `base_url` + `model` | 如 SiliconFlow `BAAI/bge-m3`（DeepSeek 没有 embedding，需另一家） |
 
 ```json
 {
-  "api_key": "你的 Key",
+  "api_key": "聊天模型的 Key",
   "params": {
     "api.base_url": "https://api.deepseek.com/v1",
-    "api.model": "deepseek-chat"
+    "api.model": "deepseek-chat",
+
+    "external_embedding.enabled": true,
+    "external_embedding.base_url": "https://api.siliconflow.cn/v1",
+    "external_embedding.model": "BAAI/bge-m3",
+    "external_embedding.api_key": "语义识别的 Key"
   }
 }
 ```
 
-> 旧字段 `zhipu_api_key` / `deepseek_api_key` 仍兼容，新代码统一写 `api_key`。
+> - **语义识别可选**：不配就不走向量召回，只靠本地字符串匹配（+ LLM 兜底，默认关）。
+> - 旧字段 `zhipu_api_key` 是**聊天 Key 的旧名**（项目最初用智谱），仍兼容；新代码统一写 `api_key`。
 
 ## 运行
 
