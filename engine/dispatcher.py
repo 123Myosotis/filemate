@@ -83,6 +83,12 @@ class IntentDispatcher:
                 seed_binding_payload=seed_binding_payload,
             )
 
+        # Word 编辑业务线：唯一入口 WordModule.handle()（规格：接入层共享、执行层独立）
+        if tool == "word_office":
+            if progress:
+                progress("正在处理 Word 文档…")
+            return self._run_word_office(user_input, target_dir, selected)
+
         # 整理/统计/导出表格类指令：禁止提前落成闲聊，先锁目录再强制 content 动作
         wants_table = self._wants_table_synthesize(
             user_input, {"output_format": "", "constraints": []})
@@ -197,6 +203,22 @@ class IntentDispatcher:
         except OSError:
             pass
         return found
+
+    def _run_word_office(self, user_input: str, target_dir: Path, selected: list) -> dict:
+        """Word 编辑业务线：唯一入口 WordModule.handle()。执行层独立，不注册 capabilities。"""
+        from pipeline.word_office import WordModule
+
+        request = {
+            "user_input": user_input,
+            "target_dir": str(target_dir),
+            "selected_files": list(selected or []),
+        }
+        result = WordModule.handle(request) or {}
+        return {
+            "handler": "WordOffice",
+            "message": str(result.get("message") or ""),
+            "operations": list(result.get("user_actions") or []),
+        }
 
     def _run_table_query_tool(
         self,

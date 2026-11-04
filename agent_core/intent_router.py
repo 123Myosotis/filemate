@@ -26,7 +26,7 @@ import config
 FILE_OPS = {"move", "organize_by_ext", "move_keyword", "move_recent", "move_date"}
 CONTENT_OPS = {"extract", "summary", "stats", "join", "report"}
 VALID_MODES = {"execute", "consult", "chat"}
-VALID_TOOLS = {"file_organize", "table_query", "table_synthesize", "chat"}
+VALID_TOOLS = {"file_organize", "table_query", "table_synthesize", "word_office", "chat"}
 
 _PROMPT_TEMPLATE = """你是 FileMate 的唯一意图决策器（Agent Router）。本地程序只按你的 JSON 调度工具。只输出一个 JSON 对象，禁止输出 JSON 以外的任何文字、不要 markdown 代码块。
 
@@ -49,6 +49,9 @@ tool 只能是以下之一：
   · 含多条件逻辑（并且/或者/只要…都标出/按时间对齐到另一张表）
   · 要从表内字段做过滤、派生列、多表关联取属性或责任人等
 - table_synthesize：简单按规则把已有列重排出一张新表，但**没有**复杂谓词树/多表 join/时间窗对齐这类跨表查询语义时可用。
+- word_office：对 **Word 文档（.docx）本身**做编辑——改写/润色/校对/摘要/替换文本/格式/批注/大纲。
+  强信号：用户明确点名「Word / docx / 文档里某段 / 这段文字 / 这个标题」，且要**改文档内容或格式**。
+  反例：只是「读 Word 内容 / 总结」且**不改文档** → 仍用 table_synthesize 或 chat，不选 word_office。
 - file_organize：只移动/归类/按扩展名或文件名归档**文件本身**（不读单元格业务逻辑）。
 - chat：问候闲聊、与文件/表格无关。
 冲突裁决：只要目标是「表里的数据」而不是「文件放哪个文件夹」，即使口语带「整理」，也选 table_query（或 table_synthesize），绝不能 file_organize。
@@ -83,7 +86,7 @@ tool 只能是以下之一：
 - 语义模糊无法确定文件时，在 plan 里说明需要用户补充什么，actions 中不要放猜测的文件。
 
 只输出如下 JSON：
-{{"tool":"file_organize|table_query|table_synthesize|chat","mode":"execute|consult|chat","subdir":"","actions":[...],"plan":""}}"""
+{{"tool":"file_organize|table_query|table_synthesize|word_office|chat","mode":"execute|consult|chat","subdir":"","actions":[...],"plan":""}}"""
 
 _CORRECTION_HINT = """
 
@@ -443,12 +446,12 @@ def _normalize(data, user_input: str = "") -> dict:
         if inferred is None:
             raise ValueError(
                 "tool 字段缺失或非法，且无法从 actions 结构推断；"
-                "请输出 tool=file_organize|table_query|table_synthesize|chat"
+                "请输出 tool=file_organize|table_query|table_synthesize|word_office|chat"
             )
         tool_raw = inferred
-    if mode == "chat":
+    if mode == "chat" and tool_raw != "word_office":
         tool_raw = "chat"
-    if tool_raw == "table_query" and mode == "chat":
+    if tool_raw in ("table_query", "word_office") and mode == "chat":
         mode = "execute"
     return {
         "tool": tool_raw,
