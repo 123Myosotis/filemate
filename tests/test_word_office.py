@@ -113,3 +113,27 @@ def test_l1_not_found(docx, monkeypatch):
     r = WordModule.handle({"user_input": "润色", "selected_files": [str(docx)]})
     assert r["status"] == "failed"
     assert r["reason"] == "not_found"
+
+
+# ---- 阶段 3：指纹 + 证据 ----
+
+def test_fingerprint_stable(docx):
+    from pipeline.word_office.state import scan
+
+    s1 = scan(docx)
+    s2 = scan(docx)
+    assert s1["structure_sha256"] == s2["structure_sha256"]
+    assert s1["structure_sha256"]
+
+
+def test_evidence_written(docx, monkeypatch):
+    import config
+    from pipeline.word_office import evidence
+
+    monkeypatch.setattr(config, "get_api_key", lambda: "k")
+    before = len(list(evidence.DIR.glob("*.json.gz"))) if evidence.DIR.exists() else 0
+    r = WordModule.handle({"user_input": "把 A型机 替换成 C型机",
+                           "selected_files": [str(docx)]})
+    assert r["status"] == "done"
+    after = len(list(evidence.DIR.glob("*.json.gz")))
+    assert after >= before + 1

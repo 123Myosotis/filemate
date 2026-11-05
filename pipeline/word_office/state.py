@@ -6,6 +6,8 @@
 """
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 
 from docx import Document
@@ -14,6 +16,21 @@ from lxml import etree
 
 def _xml(doc) -> str:
     return etree.tostring(doc.element.body, encoding="unicode")
+
+
+def file_sha256(path: Path) -> str:
+    """文件内容指纹（检测"文件被改"）。"""
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def structure_sha256(state: dict) -> str:
+    """结构指纹（段落数 / 表格 / 样式分布）。"""
+    blob = json.dumps(
+        {"p": state.get("paragraphs"), "t": state.get("tables"),
+         "s": state.get("styles")},
+        sort_keys=True, ensure_ascii=False,
+    )
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
 def scan(path: Path) -> dict:
@@ -34,7 +51,7 @@ def scan(path: Path) -> dict:
         tables.append({"rows": nrows, "cols": ncols, "merged": merged})
 
     xml = _xml(doc)
-    return {
+    result = {
         "path": str(path),
         "paragraphs": len(paragraphs),
         "styles": styles,
@@ -46,6 +63,8 @@ def scan(path: Path) -> dict:
         "has_bookmark": "<w:bookmarkStart" in xml,
         "has_nested_table": xml.count("<w:tbl>") > len(doc.tables),
     }
+    result["structure_sha256"] = structure_sha256(result)
+    return result
 
 
 def predicates(state: dict) -> dict:

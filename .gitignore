@@ -32,6 +32,7 @@ web/memory_correction/.token
 db/*.db
 db/*.db-*
 storage/*.json
+storage/evidence/
 diagnostics/
 web/*/logs/
 *.log
@@ -61,5 +62,5 @@ word_office_*.md
 !tests/**/*.xlsx
 !fixtures/**/*.xlsx
 
-# ---- 本地 git 备份 ----
+# ---- 鏈湴 git 澶囦唤 ----
 .git.bak/

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 import shutil
+import time
 from pathlib import Path
 
 from docx import Document
@@ -207,6 +208,22 @@ class WordModule:
             result = _execute(target, state, preds, plan)
         _audit({"path": str(target), "tier": tier, "ops": len(plan["operations"]),
                 "status": result.get("status")})
+        try:
+            from .evidence import write_evidence
+            write_evidence({
+                "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "user_input": text,
+                "tier": tier,
+                "file": {"path": str(target),
+                         "structure_sha256": state.get("structure_sha256", "")},
+                "ops": len(plan["operations"]),
+                "before": {"paragraphs": state["paragraphs"],
+                           "tables": state["tables"]},
+                "status": result.get("status"),
+                "reason": result.get("reason"),
+            })
+        except Exception:  # noqa: BLE001
+            pass
         return _finish(result, stages, warnings=warnings)
 
 
@@ -313,6 +330,11 @@ def _execute(target: Path, state: dict, preds: dict, plan: dict) -> dict:
     n_run, n_para = _replace(doc, find, repl)
     doc.save(str(target))
 
+    after = scan(target)
+    if (after["paragraphs"] != state["paragraphs"]
+            or after["tables"] != state["tables"]):
+        shutil.copy2(backup, target)
+        return _fail("verify_failed", "替换改变了文档结构，已恢复原文件。")
     if _count_all(target, find) != 0:
         shutil.copy2(backup, target)
         return _fail("verify_failed", "替换后仍有残留，已恢复原文件。")
