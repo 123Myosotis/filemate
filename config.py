@@ -60,6 +60,8 @@ def set_param(key: str, value):
 #               "chunk.max_tokens.technical": 6000 }
 # ------------------------------------------------------------------
 PARAM_DEFAULTS = {
+    # ---- Word 编辑（A–E 任务级；预算单位 token） ----
+    "word_office.budget": {"A": 0, "B": 2000, "C": 8000, "D": 32000, "E": 4000},
     # ---- API 客户端（智谱 OpenAI 兼容：base 配到 v4，客户端自动拼 /chat/completions） ----
     "api.base_url": "https://open.bigmodel.cn/api/paas/v4",
     "api.model": "glm-4-flash",

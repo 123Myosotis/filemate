@@ -82,6 +82,8 @@ def ensure_contract_library(contract_dir: Optional[str] = None) -> ContractVersi
         raise ContractLibraryError("contract missing enums")
     if not cv.data.get("contract_version"):
         raise ContractLibraryError("contract missing contract_version field")
+    if not isinstance(cv.data.get("word_office"), dict):
+        raise ContractLibraryError("contract missing word_office section")
 
     _BOOT_CV = cv
     _BOOT_DONE = True

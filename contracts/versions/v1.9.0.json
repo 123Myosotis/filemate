@@ -4,16 +4,29 @@
   "word_office": {
     "tool": "word_office",
     "tiers": [
-      "L0",
-      "L1",
-      "L2",
-      "L3"
+      "A",
+      "B",
+      "C",
+      "D",
+      "E"
     ],
     "v1_scope": [
-      "L0",
-      "L1"
+      "A",
+      "B"
     ],
-    "note": "Word 编辑业务线；接入层共享、执行层独立（不注册 capabilities.py）。"
+    "ops_whitelist": [
+      "find_replace",
+      "inspect",
+      "l1"
+    ],
+    "budget": {
+      "A": 0,
+      "B": 2000,
+      "C": 8000,
+      "D": 32000,
+      "E": 4000
+    },
+    "note": "Word 编辑业务线；A–E 任务级；接入层共享、执行层独立（不注册 capabilities.py）。"
   },
   "min_acceptable_version": "v1.1.0",
   "compat_window_until_version": "v1.8.0",
