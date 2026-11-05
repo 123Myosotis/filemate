@@ -480,6 +480,21 @@ def _dynamic_attr_hits(rules: dict) -> List[str]:
     return bad
 
 
+def _word_office_budget_hits() -> List[str]:
+    """R7: config 的 word_office.budget 必须与契约一致（防漂移）。"""
+    try:
+        cv = load_contract(version=read_current_pointer())
+        contract = (cv.data.get("word_office") or {}).get("budget") or {}
+        import config
+        config_budget = config.PARAM_DEFAULTS.get("word_office.budget") or {}
+        if contract != config_budget:
+            return ["R7_WORD_BUDGET_DRIFT contract=%s config=%s"
+                    % (contract, config_budget)]
+    except Exception as e:  # noqa: BLE001
+        return ["R7_WORD_BUDGET %s" % e]
+    return []
+
+
 def run_scan() -> Tuple[int, List[str]]:
     rules = _load_rules()
     bad: List[str] = []
@@ -493,6 +508,7 @@ def run_scan() -> Tuple[int, List[str]]:
     bad.extend(_cmp_aliases_hits())
     bad.extend(_query_ops_hits())
     bad.extend(_prompt_enum_hits())
+    bad.extend(_word_office_budget_hits())
     # dedupe preserve order
     seen = set()
     uniq = []

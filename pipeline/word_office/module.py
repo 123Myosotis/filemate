@@ -20,14 +20,24 @@ from .state import is_clean, predicates, scan
 # ---------------------------------------------------------------
 
 
-_L1_HINTS = ("校对", "错别字", "润色", "改写", "摘要", "总结", "标记", "术语", "建议")
+_TIER_HINTS = ("校对", "错别字", "润色", "改写", "摘要", "总结", "标记", "术语", "建议")
 
 
 def _decide_tier(text: str, state: dict, preds: dict) -> str:
-    """决策表占位：先按用户词判 L1，其余 L0；后续换规则表。"""
-    if any(h in str(text or "") for h in _L1_HINTS):
-        return "L1"
-    return "L0"
+    """决策表占位：有 AI 类词 → B；否则 A（确定性）。"""
+    if any(h in str(text or "") for h in _TIER_HINTS):
+        return "B"
+    return "A"
+
+
+def _finish(result: dict, stages: list = None, tokens: dict = None,
+            warnings: list = None) -> dict:
+    """统一返回结构：status / stages / fail_locus / tokens / warnings。"""
+    result.setdefault("stages", stages or [])
+    result.setdefault("fail_locus", "")
+    result.setdefault("tokens", tokens or {})
+    result.setdefault("warnings", warnings or [])
+    return result
 
 
 def _apply_overlay(plan: dict) -> dict:
@@ -148,45 +158,56 @@ def _plan_ops(text: str) -> list:
 class WordModule:
     @staticmethod
     def handle(request: dict) -> dict:
+        stages: list = []
         if not _authorize(request):
-            return _fail("unauthorized", "当前无权执行 Word 操作。")
+            return _finish(_fail("unauthorized", "当前无权执行 Word 操作。"))
 
         text = str(request.get("user_input") or "")
         selected = [str(p) for p in (request.get("selected_files") or []) if str(p).strip()]
         docxs = [p for p in selected if p.lower().endswith(".docx")]
         if not docxs:
-            return _fail("no_docx", "请先在文件管理器里选中一个 .docx 文件，我才能处理。")
+            return _finish(_fail("no_docx", "请先在文件管理器里选中一个 .docx 文件，我才能处理。"))
         target = Path(docxs[0])
         if not target.is_file():
-            return _fail("not_found", "选中的文件不存在：%s" % target.name)
+            return _finish(_fail("not_found", "选中的文件不存在：%s" % target.name))
 
         state = scan(target)
+        stages.append({"name": "scan", "status": "ok", "detail": "%d 段" % state["paragraphs"]})
         preds = predicates(state)
         tier = _decide_tier(text, state, preds)
-        if not is_clean(preds) and tier == "L0":
-            # 谓词不干净（有修订/控件/字段/书签/嵌套表）：L0 不静默执行，转确认
+        if not is_clean(preds) and tier == "A":
             dirty = [k for k in (
                 "no_revision_in_target", "no_content_control", "no_field_in_range",
                 "no_bookmark_in_range", "no_nested_table")
                 if preds.get(k, {}).get("value") != "true"]
-            return _fail(
+            return _finish(_fail(
                 "needs_confirmation",
-                "这份文档有结构风险（%s），L0 不静默执行。" % "、".join(dirty))
+                "这份文档有结构风险（%s），A 级不静默执行。" % "、".join(dirty)), stages)
 
         plan = {"tier": tier,
-                "operations": [{"op": "l1"}] if tier == "L1" else _plan_ops(text)}
+                "operations": [{"op": "l1"}] if tier == "B" else _plan_ops(text)}
         plan = _apply_overlay(plan)
-        pre = _preflight(plan)
-        if not pre.get("ok"):
-            return _fail("preflight", str(pre.get("reason") or "预检未通过"))
 
-        if tier == "L1":
+        from .gate import pre_check
+        pre = pre_check(plan)
+        if not pre["ok"]:
+            return _finish(
+                _fail("pre_check", "预检未通过：%s" % "、".join(pre["errors"])),
+                stages, warnings=pre["warnings"])
+        warnings = list(pre["warnings"])
+
+        pre2 = _preflight(plan)  # 旧占位，保留（现在实际由 pre_check 承担）
+        if not pre2.get("ok"):
+            return _finish(_fail("preflight", str(pre2.get("reason") or "")),
+                           stages, warnings=warnings)
+
+        if tier == "B":
             result = _exec_l1(target, state, preds, text)
         else:
             result = _execute(target, state, preds, plan)
         _audit({"path": str(target), "tier": tier, "ops": len(plan["operations"]),
                 "status": result.get("status")})
-        return result
+        return _finish(result, stages, warnings=warnings)
 
 
 def _portrait(target: Path, state: dict, limit: int = 30) -> str:
