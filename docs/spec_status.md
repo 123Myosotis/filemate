@@ -1,20 +1,23 @@
 # Word 规格落地状态（对照 `docs/specs/word_office_spec.md`）
 
-> 当前 = **v1**：L0 + L1 + Pre-check + 指纹/证据 + 记忆 + 任务链 + E 分块。
-> **v2（L2）/ v3（L3）未开始**——**不要误以为"规格全做了"**。
+> **两个维度**（**替代 L0–L3**）：
+> - **任务**：A–E（见 `docs/architecture.md` §1）
+> - **改写**：`op_type`（replace / insert / delete / format / move / tracked_change）
+>
+> **L0–L3 是规格历史名，已废弃**；**L2/L3 = `op_type` 的 `move`/`tracked_change` + 跨结构**。
 
 | 规格里的 | 状态 | 说明 |
 |---|---|---|
-| **L0**（确定性） | ✅ | 结构检查 + 确定性替换 |
-| **L1**（轻 AI） | ✅ | AI 建议 + 白名单 + 结构校验 + 内容对账 |
-| **L2**（跨结构语义） | ❌ **未开始** | 大纲 / 表↔叙述 / 批注驱动 / 对比 |
-| **L3**（事务层） | ❌ **未开始** | 修订 / 控件 / 交叉引用 |
+| **L0**（确定性） | ✅ | = **A 级** + `replace` / `inspect` |
+| **L1**（轻 AI） | ✅ | = **B 级** + `l1` |
+| **L2**（跨结构语义） | ❌ | = **跨结构 `move` / `replace`**（未做） |
+| **L3**（事务层） | ❌ | = **`tracked_change`**（未做） |
 | 九对象 | ⚠️ **3/9** | 只有 Intent / DocumentState / Plan；其余 6 个**占位** |
-| 七状态机 | ⚠️ **3/7** | `done` / `failed` / `partially_completed`；缺 `plan_invalidated` / `failed_postcheck` / `compensation_failed` / `rollback_failed` |
+| 七状态机 | ⚠️ **3/7** | `done` / `failed` / `partially_completed`；缺 4 个 |
 | 决策表 | ⚠️ **关键词版** | `_decide_tier` 按词判，不是规则表 |
 | Overlay / preflight | ⚠️ **stub** | 占位函数 |
 | 分片（`route_before_scan`） | ⚠️ **只做 `chunk`** | 按标题切块，没有路由 |
-| 事务层（L3） | ❌ **未开始** | — |
+| 事务层（L3） | ❌ | = `tracked_change`（未做） |
 
 ---
 
