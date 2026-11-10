@@ -519,6 +519,45 @@ def _exec_insert(target: Path, op: dict) -> dict:
             "plan_ref": None, "audit_ref": None, "user_actions": []}
 
 
+def _new_run(text: str, rpr):
+    """造一个 run（可带 `w:rPr` 副本，保留格式）。"""
+    from copy import deepcopy
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    r = OxmlElement("w:r")
+    if rpr is not None:
+        r.append(deepcopy(rpr))
+    t = OxmlElement("w:t")
+    t.set(qn("xml:space"), "preserve")
+    t.text = text
+    r.append(t)
+    return r
+
+
+def _split_run_at(p, find: str):
+    """在段落里把含 `find` 的 run **拆成 before/find/after**（保留格式）。
+
+    返回 **find 那个 run** 的 `w:r`；**找不到**（跨 run）返回 `None`。
+    """
+    from docx.oxml.ns import qn
+
+    for r in list(p.runs):
+        if find not in r.text:
+            continue
+        idx = r.text.index(find)
+        before, after = r.text[:idx], r.text[idx + len(find):]
+        rpr = r._r.find(qn("w:rPr"))
+        # 原 run 改成 before
+        r.text = before
+        mid = _new_run(find, rpr)
+        tail = _new_run(after, rpr)
+        r._r.addnext(mid)
+        mid.addnext(tail)
+        return mid
+    return None
+
+
 def _exec_delete(target: Path, op: dict) -> dict:
     """delete：只删**目标文本**（run 级）；整段删空才删段。"""
     find = str(op.get("find") or "").strip()
@@ -533,9 +572,17 @@ def _exec_delete(target: Path, op: dict) -> dict:
         if find not in orig:
             continue
         n += orig.count(find)
+        mid = _split_run_at(p, find)
+        if mid is not None:
+            # 只删 find 那个 run（**保留前后 run 的格式**）
+            mid.getparent().remove(mid)
+            if not p.text.strip():
+                p._p.getparent().remove(p._p)
+            continue
+        # 跨 run：退回"清空重建"
         rest = orig.replace(find, "")
         if not rest.strip():
-            p._p.getparent().remove(p._p)   # 整段删空 → 删段
+            p._p.getparent().remove(p._p)
             continue
         for r in list(p.runs):
             r._r.getparent().remove(r._r)
@@ -640,28 +687,34 @@ def _exec_tracked_change(target: Path, op: dict) -> dict:
         orig = p.text
         if find not in orig:
             continue
-        idx = orig.index(find)
-        before, after = orig[:idx], orig[idx + len(find):]
         n += 1
-        for r in list(p.runs):
-            r._r.getparent().remove(r._r)
-        # 前文（普通 run）
-        rb = _plain_run(before, "b")
-        if rb is not None:
-            p._p.append(rb)
-        # w:del（只包 find）
+        mid = _split_run_at(p, find)
+        if mid is None:
+            # 跨 run：退回"清空重建"
+            for r in list(p.runs):
+                r._r.getparent().remove(r._r)
+            p.add_run(orig)
+            mid = None
+        # w:del：把 mid 包进去
         del_el = OxmlElement("w:del")
         del_el.set(qn("w:id"), str(9000 + n))
         del_el.set(qn("w:author"), "FileMate")
         del_el.set(qn("w:date"), ts)
-        del_run = OxmlElement("w:r")
-        del_text = OxmlElement("w:delText")
-        del_text.set(qn("xml:space"), "preserve")
-        del_text.text = find
-        del_run.append(del_text)
-        del_el.append(del_run)
-        p._p.append(del_el)
-        # w:ins（只放 replace）
+        if mid is not None:
+            mid.addprevious(del_el)
+            del_el.append(mid)
+            # `w:del` 里的文字必须是 `w:delText`（不是 `w:t`）
+            for t in mid.findall(qn("w:t")):
+                t.tag = qn("w:delText")
+        else:
+            del_run = OxmlElement("w:r")
+            del_text = OxmlElement("w:delText")
+            del_text.set(qn("xml:space"), "preserve")
+            del_text.text = find
+            del_run.append(del_text)
+            del_el.append(del_run)
+            p._p.append(del_el)
+        # w:ins：紧跟在 del 后
         ins_el = OxmlElement("w:ins")
         ins_el.set(qn("w:id"), str(9500 + n))
         ins_el.set(qn("w:author"), "FileMate")
@@ -672,11 +725,7 @@ def _exec_tracked_change(target: Path, op: dict) -> dict:
         ins_text.text = repl
         ins_run.append(ins_text)
         ins_el.append(ins_run)
-        p._p.append(ins_el)
-        # 后文（普通 run）
-        ra = _plain_run(after, "a")
-        if ra is not None:
-            p._p.append(ra)
+        del_el.addnext(ins_el)
     if n == 0:
         return _fail("not_found", "文档里没找到「%s」。" % find)
     doc.save(str(target))

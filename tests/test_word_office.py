@@ -252,3 +252,35 @@ def test_tracked_change_run_level(docx, monkeypatch):
     xml = zipfile.ZipFile(str(docx)).read("word/document.xml").decode("utf-8")
     texts = re.findall(r"<w:delText[^>]*>([^<]*)</w:delText>", xml)
     assert texts == ["甲方是A型机"]
+
+
+def test_delete_preserves_format():
+    """delete 只删目标文字，**其余 run 的格式保留**。"""
+    import config
+    import shutil
+    from docx import Document
+    from docx.shared import Pt
+    from pipeline.word_office import WordModule
+
+    base = BASE / "fmt"
+    shutil.rmtree(base, ignore_errors=True)
+    base.mkdir(parents=True, exist_ok=True)
+    p = base / "f.docx"
+    d = Document()
+    para = d.add_paragraph()
+    r1 = para.add_run("甲方是A型机，")
+    r1.bold = True
+    r1.font.size = Pt(14)
+    r2 = para.add_run("乙方是B型机。")
+    r2.italic = True
+    d.save(str(p))
+    config.get_api_key = lambda: "k"
+    r = WordModule.handle({"user_input": "删除 甲方是A型机",
+                           "selected_files": [str(p)], "confirmed": True})
+    assert r["status"] == "done"
+    d2 = Document(str(p))
+    texts = {run.text: run for q in d2.paragraphs for run in q.runs if run.text}
+    assert "，" in texts
+    assert texts["，"].bold is True
+    assert texts["，"].font.size == Pt(14)
+    assert texts["乙方是B型机。"].italic is True
