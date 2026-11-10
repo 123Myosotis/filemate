@@ -1,21 +1,23 @@
 # -*- coding: utf-8 -*-
-"""记忆（阶段 4.1）：文件主题记忆表 + 保存 / 读取 / 检索 / 触摸。
+"""Word 记忆（阶段 ②）：文件主题 + 术语 + 术语↔锚点 + 生命周期。
 
-最小版：
-- 表 `memory_file`（hash 主键 + summary + keywords + use_count + last_used）。
-- 检索优先 FTS5，FTS5 不可用则回退 `LIKE`。
-- 不做热度/floor/降级/做梦（后续阶段）。
+设计依据（`docs/architecture.md` §9）：
+- **底座**：`memory_file`（文件主题）+ `session`（即时）——已有。
+- **抄 Excel 格式**：`memory_term`（术语结构）+ 生命周期。
+- **Word 独有**：`memory_term_anchor`（术语 ↔ 段落锚点）。
+
+**不碰** Excel 的 `memory_rag`（只照格式）。
 """
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 import time
 from pathlib import Path
 
 from db.database import DB_PATH
 
-_TABLE = "memory_file"
-_FTS = "memory_file_fts"
+_STATUS = ("active", "invalidated", "revoked")
 
 _DDL = [
     """CREATE TABLE IF NOT EXISTS memory_file (
@@ -25,6 +27,24 @@ _DDL = [
         keywords TEXT,
         use_count INTEGER DEFAULT 0,
         last_used TEXT,
+        created_at TEXT
+    )""",
+    """CREATE TABLE IF NOT EXISTS memory_term (
+        term_id TEXT PRIMARY KEY,
+        term TEXT NOT NULL,
+        aliases TEXT,
+        weight REAL DEFAULT 1.0,
+        status TEXT NOT NULL DEFAULT 'active',
+        created_at TEXT,
+        last_used TEXT
+    )""",
+    """CREATE TABLE IF NOT EXISTS memory_term_anchor (
+        anchor_id TEXT PRIMARY KEY,
+        term_id TEXT NOT NULL,
+        file_hash TEXT NOT NULL,
+        locator TEXT NOT NULL,
+        snippet TEXT,
+        status TEXT NOT NULL DEFAULT 'active',
         created_at TEXT
     )""",
 ]
@@ -42,11 +62,10 @@ def init_memory() -> None:
     try:
         for sql in _DDL:
             conn.execute(sql)
-        # FTS5 可选（不支持就跳过）
         try:
             conn.execute(
-                "CREATE VIRTUAL TABLE IF NOT EXISTS %s USING fts5(hash UNINDEXED, summary, keywords)"
-                % _FTS
+                "CREATE VIRTUAL TABLE IF NOT EXISTS memory_file_fts "
+                "USING fts5(hash UNINDEXED, summary, keywords)"
             )
         except sqlite3.OperationalError:
             pass
@@ -55,20 +74,17 @@ def init_memory() -> None:
         conn.close()
 
 
-def _has_fts(conn: sqlite3.Connection) -> bool:
-    row = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (_FTS,)
-    ).fetchone()
-    return row is not None
+def _now() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%S")
 
+
+# ---------------- 文件主题（已有） ----------------
 
 def save_file_memory(hash: str, path: str = "", summary: str = "",
                      keywords: str = "") -> None:
-    """写入/更新一条文件记忆（按 hash 覆盖）。"""
     if not hash:
         return
     init_memory()
-    now = time.strftime("%Y-%m-%dT%H:%M:%S")
     conn = _connect()
     try:
         conn.execute(
@@ -76,14 +92,16 @@ def save_file_memory(hash: str, path: str = "", summary: str = "",
             "VALUES(?,?,?,?,0,?,?) "
             "ON CONFLICT(hash) DO UPDATE SET path=excluded.path, "
             "summary=excluded.summary, keywords=excluded.keywords, last_used=excluded.last_used",
-            (hash, path, summary, keywords, now, now),
+            (hash, path, summary, keywords, _now(), _now()),
         )
-        if _has_fts(conn):
-            conn.execute("DELETE FROM %s WHERE hash=?" % _FTS, (hash,))
+        try:
+            conn.execute("DELETE FROM memory_file_fts WHERE hash=?", (hash,))
             conn.execute(
-                "INSERT INTO %s(hash, summary, keywords) VALUES(?,?,?)" % _FTS,
+                "INSERT INTO memory_file_fts(hash, summary, keywords) VALUES(?,?,?)",
                 (hash, summary, keywords),
             )
+        except sqlite3.OperationalError:
+            pass
         conn.commit()
     finally:
         conn.close()
@@ -93,9 +111,7 @@ def get_file_memory(hash: str) -> dict | None:
     init_memory()
     conn = _connect()
     try:
-        row = conn.execute(
-            "SELECT * FROM memory_file WHERE hash=?", (hash,)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM memory_file WHERE hash=?", (hash,)).fetchone()
         return dict(row) if row else None
     finally:
         conn.close()
@@ -110,7 +126,7 @@ def touch(hash: str) -> None:
     try:
         conn.execute(
             "UPDATE memory_file SET use_count=use_count+1, last_used=? WHERE hash=?",
-            (time.strftime("%Y-%m-%dT%H:%M:%S"), hash),
+            (_now(), hash),
         )
         conn.commit()
     finally:
@@ -125,11 +141,14 @@ def search_memory(query: str, limit: int = 10) -> list[dict]:
     init_memory()
     conn = _connect()
     try:
-        if _has_fts(conn):
+        row = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_file_fts'"
+        ).fetchone()
+        if row is not None:
             try:
                 rows = conn.execute(
-                    "SELECT hash, summary, keywords FROM %s WHERE %s MATCH ? LIMIT ?"
-                    % (_FTS, _FTS), (q, limit)
+                    "SELECT hash, summary, keywords FROM memory_file_fts WHERE memory_file_fts MATCH ? LIMIT ?",
+                    (q, limit),
                 ).fetchall()
                 return [dict(r) for r in rows]
             except sqlite3.OperationalError:
@@ -141,5 +160,93 @@ def search_memory(query: str, limit: int = 10) -> list[dict]:
             (like, like, limit),
         ).fetchall()
         return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+# ---------------- 术语 + 术语↔锚点（新增） ----------------
+
+def _stable_id(prefix: str, text: str) -> str:
+    return prefix + hashlib.sha256(text.encode("utf-8")).hexdigest()[:24]
+
+
+def upsert_term(term: str, aliases: str = "", weight: float = 1.0) -> str:
+    """写/更新一个术语；返回 term_id（**稳定哈希**，可重复调用）。"""
+    t = str(term).strip()
+    if not t:
+        return ""
+    init_memory()
+    term_id = _stable_id("t-", t)
+    conn = _connect()
+    try:
+        conn.execute(
+            "INSERT INTO memory_term(term_id, term, aliases, weight, status, created_at, last_used) "
+            "VALUES(?,?,?,?, 'active', ?, ?) "
+            "ON CONFLICT(term_id) DO UPDATE SET aliases=excluded.aliases, "
+            "weight=excluded.weight, last_used=excluded.last_used",
+            (term_id, t, aliases, float(weight), _now(), _now()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return term_id
+
+
+def get_term(term: str) -> dict | None:
+    init_memory()
+    conn = _connect()
+    try:
+        row = conn.execute("SELECT * FROM memory_term WHERE term=?", (str(term).strip(),)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def link_anchor(term_id: str, file_hash: str, locator: str, snippet: str = "") -> str:
+    """把术语挂到**锚点**（段落/标题/表格位置）。"""
+    if not term_id or not file_hash or not locator:
+        return ""
+    init_memory()
+    anchor_id = _stable_id("a-", "|".join((term_id, file_hash, locator)))
+    conn = _connect()
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO memory_term_anchor"
+            "(anchor_id, term_id, file_hash, locator, snippet, status, created_at) "
+            "VALUES(?,?,?,?,?, 'active', ?)",
+            (anchor_id, term_id, file_hash, locator, snippet, _now()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return anchor_id
+
+
+def get_anchors(term_id: str, limit: int = 20) -> list[dict]:
+    init_memory()
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM memory_term_anchor WHERE term_id=? AND status='active' LIMIT ?",
+            (term_id, int(limit)),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def set_status(term_id: str, status: str) -> bool:
+    """生命周期：active / invalidated / revoked。"""
+    if status not in _STATUS:
+        return False
+    init_memory()
+    conn = _connect()
+    try:
+        cur = conn.execute(
+            "UPDATE memory_term SET status=?, last_used=? WHERE term_id=?",
+            (status, _now(), term_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
     finally:
         conn.close()
