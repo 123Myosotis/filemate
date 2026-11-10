@@ -20,7 +20,8 @@
       "l1",
       "insert",
       "delete",
-      "format"
+      "format",
+      "move"
     ],
     "budget": {
       "A": 0,

@@ -190,3 +190,42 @@ def test_format_bold(docx, monkeypatch):
                            "selected_files": [str(docx)]})
     assert r["status"] == "done"
     assert r["reason"] == "format"
+
+
+def test_move():
+    import config
+    import shutil
+    from docx import Document
+    from pipeline.word_office import WordModule
+
+    base = BASE / "move"
+    shutil.rmtree(base, ignore_errors=True)
+    base.mkdir(parents=True, exist_ok=True)
+    p = base / "m.docx"
+    d = Document()
+    d.add_paragraph("第一段：甲方是A型机。")
+    d.add_paragraph("第二段：乙方是B型机。")
+    d.save(str(p))
+    config.get_api_key = lambda: "k"
+    r = WordModule.handle({"user_input": "把 甲方是A型机 移到 乙方是B型机 后面",
+                           "selected_files": [str(p)]})
+    assert r["status"] == "done"
+    assert r["reason"] == "move"
+
+
+def test_move_not_found(docx, monkeypatch):
+    import config
+    monkeypatch.setattr(config, "get_api_key", lambda: "k")
+    r = WordModule.handle({"user_input": "把 不存在 移到 乙方是B型机 后面",
+                           "selected_files": [str(docx)]})
+    assert r["status"] == "failed"
+    assert r["reason"] == "not_found"
+
+
+def test_move_not_found(docx, monkeypatch):
+    import config
+    monkeypatch.setattr(config, "get_api_key", lambda: "k")
+    r = WordModule.handle({"user_input": "把 不存在 移到 乙方是B型机 后面",
+                           "selected_files": [str(docx)]})
+    assert r["status"] == "failed"
+    assert r["reason"] == "not_found"

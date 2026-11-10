@@ -151,6 +151,9 @@ _FORMAT_PATTERNS = (
     re.compile(r"(?:把|将)\s*(.+?)\s*(?:加粗|设为粗体|变粗)"),
     re.compile(r"(?:把|将)\s*(.+?)\s*(?:改斜体|设为斜体)"),
 )
+_MOVE_PATTERNS = (
+    re.compile(r"(?:把|将)\s*(.+?)\s*(?:移到|移动到|挪到)\s*(.+?)\s*(后面|之后|后|前面|之前|前)"),
+)
 
 
 def _plan_ops(text: str) -> list:
@@ -174,6 +177,14 @@ def _plan_ops(text: str) -> list:
             mode = "bold" if ("粗" in text) else "italic"
             if find:
                 return [{"op": "format", "find": find, "mode": mode}]
+    for pat in _MOVE_PATTERNS:
+        m = pat.search(text)
+        if m:
+            src = m.group(1).strip().strip("「」\"' ")
+            dst = m.group(2).strip().strip("「」\"' ")
+            before = any(k in text for k in ("前面", "之前", "前"))
+            if src and dst:
+                return [{"op": "move", "src": src, "dst": dst, "before": before}]
     for pat in _REPLACE_PATTERNS:
         m = pat.search(text)
         if m:
@@ -439,6 +450,8 @@ def _execute(target: Path, state: dict, preds: dict, plan: dict) -> dict:
         return _exec_delete(target, op)
     if op["op"] == "format":
         return _exec_format(target, op)
+    if op["op"] == "move":
+        return _exec_move(target, op)
 
     find, repl = op.get("find", ""), op.get("replace", "")
     before = _count_all(target, find)
@@ -517,7 +530,6 @@ def _exec_delete(target: Path, op: dict) -> dict:
 
 
 def _exec_format(target: Path, op: dict) -> dict:
-    """format：对**含目标文本的 run** 设粗体/斜体（只改 run，不改文字）。"""
     find = str(op.get("find") or "").strip()
     mode = str(op.get("mode") or "bold")
     if not find:
@@ -541,4 +553,39 @@ def _exec_format(target: Path, op: dict) -> dict:
     return {"status": "done", "reason": "format",
             "message": "✅ 已把含「%s」的 %d 个文本块设为%s（写前备份：%s）。"
                        % (find, n, label, backup.name),
+            "plan_ref": None, "audit_ref": None, "user_actions": []}
+
+
+def _exec_move(target: Path, op: dict) -> dict:
+    """move：把含 `src` 的段落**移到**含 `dst` 的段落之后（或之前）。"""
+    src = str(op.get("src") or "").strip()
+    dst = str(op.get("dst") or "").strip()
+    before = bool(op.get("before"))
+    if not src or not dst:
+        return _fail("bad_plan", "move 缺少源或目标。")
+    backup = target.with_suffix(target.suffix + ".bak")
+    shutil.copy2(target, backup)
+    doc = Document(str(target))
+    src_p = dst_p = None
+    for p in _iter_paragraphs(doc):
+        if src_p is None and src in p.text:
+            src_p = p
+        if dst_p is None and dst in p.text:
+            dst_p = p
+    if src_p is None:
+        return _fail("not_found", "文档里没找到「%s」。" % src)
+    if dst_p is None:
+        return _fail("not_found", "文档里没找到目标「%s」。" % dst)
+    if src_p is dst_p:
+        return _fail("bad_plan", "源和目标在同一段，无法移动。")
+    el = src_p._p
+    el.getparent().remove(el)
+    if before:
+        dst_p._p.addprevious(el)
+    else:
+        dst_p._p.addnext(el)
+    doc.save(str(target))
+    return {"status": "done", "reason": "move",
+            "message": "✅ 已把含「%s」的段落移到「%s」%s（写前备份：%s）。"
+                       % (src, dst, "前面" if before else "后面", backup.name),
             "plan_ref": None, "audit_ref": None, "user_actions": []}
