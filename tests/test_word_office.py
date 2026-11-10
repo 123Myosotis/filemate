@@ -152,3 +152,32 @@ def test_memory_written(docx, monkeypatch):
     assert m is not None
     assert m["summary"].startswith("段落")
     assert m["path"]
+
+
+# ---- 阶段 6.1：insert / delete / format ----
+
+def test_insert(docx, monkeypatch):
+    import config
+    monkeypatch.setattr(config, "get_api_key", lambda: "k")
+    r = WordModule.handle({"user_input": "在 标题 后面插入 新章节",
+                           "selected_files": [str(docx)]})
+    assert r["status"] == "done"
+    assert r["reason"] == "insert"
+
+
+def test_delete(docx, monkeypatch):
+    import config
+    monkeypatch.setattr(config, "get_api_key", lambda: "k")
+    r = WordModule.handle({"user_input": "删除 甲方是A型机",
+                           "selected_files": [str(docx)]})
+    assert r["status"] == "done"
+    assert r["reason"] == "delete"
+
+
+def test_format_bold(docx, monkeypatch):
+    import config
+    monkeypatch.setattr(config, "get_api_key", lambda: "k")
+    r = WordModule.handle({"user_input": "把 乙方是B型机 加粗",
+                           "selected_files": [str(docx)]})
+    assert r["status"] == "done"
+    assert r["reason"] == "format"

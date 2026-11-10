@@ -140,7 +140,40 @@ _REPLACE_PATTERNS = (
 )
 
 
+_INSERT_PATTERNS = (
+    re.compile(r"在\s*(.+?)\s*(?:后面|之后|后)\s*插入\s*(.+?)(?:[。，,；;]|$)"),
+    re.compile(r"把\s*(.+?)\s*(?:后面|之后|后)\s*插入\s*(.+?)(?:[。，,；;]|$)"),
+)
+_DELETE_PATTERNS = (
+    re.compile(r"(?:删除|删掉|去掉)\s*(?:这一段|这一行|这一句)?\s*(.+?)(?:[。，,；;]|$)"),
+)
+_FORMAT_PATTERNS = (
+    re.compile(r"(?:把|将)\s*(.+?)\s*(?:加粗|设为粗体|变粗)"),
+    re.compile(r"(?:把|将)\s*(.+?)\s*(?:改斜体|设为斜体)"),
+)
+
+
 def _plan_ops(text: str) -> list:
+    for pat in _INSERT_PATTERNS:
+        m = pat.search(text)
+        if m:
+            anchor = m.group(1).strip().strip("「」\"' ")
+            content = m.group(2).strip().strip("「」\"' ")
+            if anchor and content:
+                return [{"op": "insert", "anchor": anchor, "content": content}]
+    for pat in _DELETE_PATTERNS:
+        m = pat.search(text)
+        if m:
+            find = m.group(1).strip().strip("「」\"' ")
+            if find:
+                return [{"op": "delete", "find": find}]
+    for pat in _FORMAT_PATTERNS:
+        m = pat.search(text)
+        if m:
+            find = m.group(1).strip().strip("「」\"' ")
+            mode = "bold" if ("粗" in text) else "italic"
+            if find:
+                return [{"op": "format", "find": find, "mode": mode}]
     for pat in _REPLACE_PATTERNS:
         m = pat.search(text)
         if m:
@@ -381,6 +414,12 @@ def _execute(target: Path, state: dict, preds: dict, plan: dict) -> dict:
         return {"status": "done", "reason": "inspect",
                 "message": _inspect_msg(state, preds),
                 "plan_ref": None, "audit_ref": None, "user_actions": []}
+    if op["op"] == "insert":
+        return _exec_insert(target, op)
+    if op["op"] == "delete":
+        return _exec_delete(target, op)
+    if op["op"] == "format":
+        return _exec_format(target, op)
 
     find, repl = op.get("find", ""), op.get("replace", "")
     before = _count_all(target, find)
@@ -405,4 +444,78 @@ def _execute(target: Path, state: dict, preds: dict, plan: dict) -> dict:
     return {"status": "done", "reason": "find_replace",
             "message": "✅ 已替换 %d 处「%s」→「%s」%s（写前备份：%s）。"
                        % (n_run + n_para, find, repl, note, backup.name),
+            "plan_ref": None, "audit_ref": None, "user_actions": []}
+
+
+def _exec_insert(target: Path, op: dict) -> dict:
+    """insert：找到含锚点的段落，在其**后**插入新段落。"""
+    anchor = str(op.get("anchor") or "").strip()
+    content = str(op.get("content") or "").strip()
+    if not anchor or not content:
+        return _fail("bad_plan", "insert 缺少锚点或内容。")
+    backup = target.with_suffix(target.suffix + ".bak")
+    shutil.copy2(target, backup)
+    doc = Document(str(target))
+    n = 0
+    for p in _iter_paragraphs(doc):
+        if anchor in p.text:
+            new_p = doc.add_paragraph(content)
+            p._p.addnext(new_p._p)
+            n += 1
+    if n == 0:
+        return _fail("not_found", "文档里没找到锚点「%s」。" % anchor)
+    doc.save(str(target))
+    return {"status": "done", "reason": "insert",
+            "message": "✅ 在「%s」后插入 %d 段（写前备份：%s）。"
+                       % (anchor, n, backup.name),
+            "plan_ref": None, "audit_ref": None, "user_actions": []}
+
+
+def _exec_delete(target: Path, op: dict) -> dict:
+    """delete：删除**含目标文本的整段**。"""
+    find = str(op.get("find") or "").strip()
+    if not find:
+        return _fail("bad_plan", "delete 缺少目标文本。")
+    backup = target.with_suffix(target.suffix + ".bak")
+    shutil.copy2(target, backup)
+    doc = Document(str(target))
+    n = 0
+    for p in list(_iter_paragraphs(doc)):
+        if find in p.text:
+            p._p.getparent().remove(p._p)
+            n += 1
+    if n == 0:
+        return _fail("not_found", "文档里没找到「%s」。" % find)
+    doc.save(str(target))
+    return {"status": "done", "reason": "delete",
+            "message": "✅ 删除含「%s」的 %d 段（写前备份：%s）。"
+                       % (find, n, backup.name),
+            "plan_ref": None, "audit_ref": None, "user_actions": []}
+
+
+def _exec_format(target: Path, op: dict) -> dict:
+    """format：对**含目标文本的 run** 设粗体/斜体（只改 run，不改文字）。"""
+    find = str(op.get("find") or "").strip()
+    mode = str(op.get("mode") or "bold")
+    if not find:
+        return _fail("bad_plan", "format 缺少目标文本。")
+    backup = target.with_suffix(target.suffix + ".bak")
+    shutil.copy2(target, backup)
+    doc = Document(str(target))
+    n = 0
+    for p in _iter_paragraphs(doc):
+        for r in p.runs:
+            if find in r.text:
+                if mode == "italic":
+                    r.italic = True
+                else:
+                    r.bold = True
+                n += 1
+    if n == 0:
+        return _fail("not_found", "文档里没找到「%s」。" % find)
+    doc.save(str(target))
+    label = "斜体" if mode == "italic" else "粗体"
+    return {"status": "done", "reason": "format",
+            "message": "✅ 已把含「%s」的 %d 个文本块设为%s（写前备份：%s）。"
+                       % (find, n, label, backup.name),
             "plan_ref": None, "audit_ref": None, "user_actions": []}
