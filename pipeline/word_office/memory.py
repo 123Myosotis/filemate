@@ -253,7 +253,60 @@ def set_status(term_id: str, status: str) -> bool:
         conn.close()
 
 
-# ---------------- 术语自动挖掘（**规则，不调 LLM**） ----------------
+# ---------------- 混合召回（proto：FTS5 + LIKE → RRF） ----------------
+
+def _fts_hits(q: str, k: int) -> list[str]:
+    init_memory()
+    conn = _connect()
+    try:
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_file_fts'").fetchone() is None:
+            return []
+        try:
+            rows = conn.execute(
+                "SELECT hash FROM memory_file_fts WHERE memory_file_fts MATCH ? LIMIT ?",
+                (q, k),
+            ).fetchall()
+            return [r["hash"] for r in rows]
+        except sqlite3.OperationalError:
+            return []
+    finally:
+        conn.close()
+
+
+def _like_hits(q: str, k: int) -> list[str]:
+    init_memory()
+    conn = _connect()
+    like = "%" + q + "%"
+    try:
+        rows = conn.execute(
+            "SELECT hash FROM memory_file WHERE summary LIKE ? OR keywords LIKE ? LIMIT ?",
+            (like, like, k),
+        ).fetchall()
+        return [r["hash"] for r in rows]
+    finally:
+        conn.close()
+
+
+def recall(query: str, limit: int = 10, rrf_k: int = 60) -> list[dict]:
+    """混合召回（proto）：**FTS5 + LIKE 两路 → RRF 融合**。
+
+    **不做向量**（Word 暂无 embedding）；等有 embedding 再加第三路。
+    """
+    q = str(query or "").strip()
+    if not q:
+        return []
+    channels = [_fts_hits(q, limit * 3), _like_hits(q, limit * 3)]
+    scores: dict[str, float] = {}
+    for ch in channels:
+        for rank, h in enumerate(ch):
+            scores[h] = scores.get(h, 0.0) + 1.0 / (rrf_k + rank + 1)
+    top = sorted(scores.items(), key=lambda kv: -kv[1])[:limit]
+    out = []
+    for h, sc in top:
+        rec = get_file_memory(h) or {"hash": h}
+        rec["score"] = round(sc, 6)
+        out.append(rec)
+    return out
 
 _ACRONYM = re.compile(r"\b[A-Z][A-Z0-9]{1,}\b")
 _QUOTED = re.compile(r"[「『《\"']([^「」『』《》\"']{2,20})[」』》\"']")

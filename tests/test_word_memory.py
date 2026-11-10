@@ -66,3 +66,10 @@ def test_session_last():
     assert session.last()["file"] == "x.docx"
     session.clear()
     assert session.last() == {}
+
+
+def test_recall_rrf():
+    memory.save_file_memory("test-rrf", "/tmp/r.docx", "设备台账", "设备")
+    hits = memory.recall("设备")
+    assert any(h["hash"] == "test-rrf" for h in hits)
+    assert all("score" in h for h in hits)
