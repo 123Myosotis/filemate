@@ -150,6 +150,8 @@ _DELETE_PATTERNS = (
 _FORMAT_PATTERNS = (
     re.compile(r"(?:把|将)\s*(.+?)\s*(?:加粗|设为粗体|变粗)"),
     re.compile(r"(?:把|将)\s*(.+?)\s*(?:改斜体|设为斜体)"),
+    re.compile(r"(?:把|将)\s*(.+?)\s*(?:设为|改成|改为)\s*(\d+)\s*(?:号|磅|pt)"),
+    re.compile(r"(?:把|将)\s*(.+?)\s*(?:设为|改成|改为)\s*([\u4e00-\u9fff]{2,4})\s*字体"),
 )
 _MOVE_PATTERNS = (
     re.compile(r"(?:把|将)\s*(.+?)\s*(?:移到|移动到|挪到)\s*(.+?)\s*(后面|之后|后|前面|之前|前)"),
@@ -173,13 +175,6 @@ def _plan_ops(text: str) -> list:
             find = m.group(1).strip().strip("「」\"' ")
             if find:
                 return [{"op": "delete", "find": find}]
-    for pat in _FORMAT_PATTERNS:
-        m = pat.search(text)
-        if m:
-            find = m.group(1).strip().strip("「」\"' ")
-            mode = "bold" if ("粗" in text) else "italic"
-            if find:
-                return [{"op": "format", "find": find, "mode": mode}]
     for pat in _TRACKED_PATTERNS:
         m = pat.search(text)
         if m:
@@ -187,6 +182,24 @@ def _plan_ops(text: str) -> list:
             repl = m.group(2).strip().strip("「」\"' ")
             if find and find != repl:
                 return [{"op": "tracked_change", "find": find, "replace": repl}]
+    for pat in _FORMAT_PATTERNS:
+        m = pat.search(text)
+        if m:
+            find = m.group(1).strip().strip("「」\"' ")
+            if not find:
+                continue
+            if "粗" in text:
+                return [{"op": "format", "find": find, "mode": "bold"}]
+            if "斜" in text:
+                return [{"op": "format", "find": find, "mode": "italic"}]
+            size = re.search(r"(\d+)\s*(?:号|磅|pt)", text)
+            if size:
+                return [{"op": "format", "find": find, "mode": "size",
+                         "size": int(size.group(1))}]
+            font = re.search(r"(?:设为|改成|改为)\s*([\u4e00-\u9fff]{2,4})\s*字体", text)
+            if font:
+                return [{"op": "format", "find": find, "mode": "font",
+                         "font": font.group(1)}]
     for pat in _MOVE_PATTERNS:
         m = pat.search(text)
         if m:
@@ -535,27 +548,55 @@ def _new_run(text: str, rpr):
     return r
 
 
-def _split_run_at(p, find: str):
-    """在段落里把含 `find` 的 run **拆成 before/find/after**（保留格式）。
+def _split_runs_at(p, find: str):
+    """拆出段落里**所有** `find` 的 run（保留 `w:rPr`）。
 
-    返回 **find 那个 run** 的 `w:r`；**找不到**（跨 run）返回 `None`。
+    - **同一 run 内**：拆 before/find/after。
+    - **跨 run**：先合并全段（保留首 run 的 `w:rPr`），再拆（**跨 run 会丢段内格式**）。
+    返回 **find 的 run 列表**。
     """
     from docx.oxml.ns import qn
 
-    for r in list(p.runs):
-        if find not in r.text:
+    out = []
+    done = set()   # 已拆过的 `w:r` 的 id（**不能比 Run 包装**——每次都是新对象）
+
+    def _remaining():
+        for r in p.runs:
+            if id(r._r) in done:
+                continue
+            if find in r.text:
+                return r
+        return None
+
+    guard = 0
+    while guard < 50:
+        guard += 1
+        hit = _remaining()
+        if hit is None:
+            # 已有 find run（在 out 里）→ 不再合并
+            if any(find in r.text for r in p.runs):
+                break
+            # 跨 run：合并全段再试
+            full = p.text
+            if find not in full or not p.runs:
+                break
+            first = p.runs[0]
+            first.text = full
+            for r in list(p.runs)[1:]:
+                r._r.getparent().remove(r._r)
             continue
-        idx = r.text.index(find)
-        before, after = r.text[:idx], r.text[idx + len(find):]
-        rpr = r._r.find(qn("w:rPr"))
-        # 原 run 改成 before
-        r.text = before
+        idx = hit.text.index(find)
+        before, after = hit.text[:idx], hit.text[idx + len(find):]
+        rpr = hit._r.find(qn("w:rPr"))
+        hit.text = before
+        done.add(id(hit._r))
         mid = _new_run(find, rpr)
         tail = _new_run(after, rpr)
-        r._r.addnext(mid)
+        hit._r.addnext(mid)
         mid.addnext(tail)
-        return mid
-    return None
+        done.add(id(mid))
+        out.append(mid)
+    return out
 
 
 def _exec_delete(target: Path, op: dict) -> dict:
@@ -572,21 +613,11 @@ def _exec_delete(target: Path, op: dict) -> dict:
         if find not in orig:
             continue
         n += orig.count(find)
-        mid = _split_run_at(p, find)
-        if mid is not None:
-            # 只删 find 那个 run（**保留前后 run 的格式**）
+        mids = _split_runs_at(p, find)
+        for mid in mids:
             mid.getparent().remove(mid)
-            if not p.text.strip():
-                p._p.getparent().remove(p._p)
-            continue
-        # 跨 run：退回"清空重建"
-        rest = orig.replace(find, "")
-        if not rest.strip():
+        if not p.text.strip():
             p._p.getparent().remove(p._p)
-            continue
-        for r in list(p.runs):
-            r._r.getparent().remove(r._r)
-        p.add_run(rest)
     if n == 0:
         return _fail("not_found", "文档里没找到「%s」。" % find)
     doc.save(str(target))
@@ -597,8 +628,14 @@ def _exec_delete(target: Path, op: dict) -> dict:
 
 
 def _exec_format(target: Path, op: dict) -> dict:
+    """format：对**目标文字**设格式（**run 级**，支持跨 run、字号、字体）。"""
+    from docx.shared import Pt
+    from docx.text.run import Run
+
     find = str(op.get("find") or "").strip()
     mode = str(op.get("mode") or "bold")
+    size = op.get("size")
+    font = str(op.get("font") or "").strip()
     if not find:
         return _fail("bad_plan", "format 缺少目标文本。")
     backup = target.with_suffix(target.suffix + ".bak")
@@ -606,19 +643,34 @@ def _exec_format(target: Path, op: dict) -> dict:
     doc = Document(str(target))
     n = 0
     for p in _iter_paragraphs(doc):
-        for r in p.runs:
-            if find in r.text:
-                if mode == "italic":
-                    r.italic = True
-                else:
-                    r.bold = True
-                n += 1
+        if find not in p.text:
+            continue
+        for mid in _split_runs_at(p, find):
+            run = Run(mid, p)
+            if mode == "italic":
+                run.italic = True
+            elif mode == "font":
+                if font:
+                    run.font.name = font
+            elif mode == "size":
+                if size:
+                    run.font.size = Pt(int(size))
+            else:
+                run.bold = True
+            n += 1
     if n == 0:
         return _fail("not_found", "文档里没找到「%s」。" % find)
     doc.save(str(target))
-    label = "斜体" if mode == "italic" else "粗体"
+    if mode == "italic":
+        label = "斜体"
+    elif mode == "font":
+        label = "字体「%s」" % font
+    elif mode == "size":
+        label = "字号 %s" % size
+    else:
+        label = "粗体"
     return {"status": "done", "reason": "format",
-            "message": "✅ 已把含「%s」的 %d 个文本块设为%s（写前备份：%s）。"
+            "message": "✅ 已把「%s」的 %d 个文本块设为%s（写前备份：%s）。"
                        % (find, n, label, backup.name),
             "plan_ref": None, "audit_ref": None, "user_actions": []}
 
@@ -688,44 +740,29 @@ def _exec_tracked_change(target: Path, op: dict) -> dict:
         if find not in orig:
             continue
         n += 1
-        mid = _split_run_at(p, find)
-        if mid is None:
-            # 跨 run：退回"清空重建"
-            for r in list(p.runs):
-                r._r.getparent().remove(r._r)
-            p.add_run(orig)
-            mid = None
-        # w:del：把 mid 包进去
-        del_el = OxmlElement("w:del")
-        del_el.set(qn("w:id"), str(9000 + n))
-        del_el.set(qn("w:author"), "FileMate")
-        del_el.set(qn("w:date"), ts)
-        if mid is not None:
+        mids = _split_runs_at(p, find)
+        for mid in mids:
+            del_el = OxmlElement("w:del")
+            del_el.set(qn("w:id"), str(9000 + n))
+            del_el.set(qn("w:author"), "FileMate")
+            del_el.set(qn("w:date"), ts)
             mid.addprevious(del_el)
             del_el.append(mid)
-            # `w:del` 里的文字必须是 `w:delText`（不是 `w:t`）
+            # `w:del` 里的文字必须是 `w:delText`
             for t in mid.findall(qn("w:t")):
                 t.tag = qn("w:delText")
-        else:
-            del_run = OxmlElement("w:r")
-            del_text = OxmlElement("w:delText")
-            del_text.set(qn("xml:space"), "preserve")
-            del_text.text = find
-            del_run.append(del_text)
-            del_el.append(del_run)
-            p._p.append(del_el)
-        # w:ins：紧跟在 del 后
-        ins_el = OxmlElement("w:ins")
-        ins_el.set(qn("w:id"), str(9500 + n))
-        ins_el.set(qn("w:author"), "FileMate")
-        ins_el.set(qn("w:date"), ts)
-        ins_run = OxmlElement("w:r")
-        ins_text = OxmlElement("w:t")
-        ins_text.set(qn("xml:space"), "preserve")
-        ins_text.text = repl
-        ins_run.append(ins_text)
-        ins_el.append(ins_run)
-        del_el.addnext(ins_el)
+            ins_el = OxmlElement("w:ins")
+            ins_el.set(qn("w:id"), str(9500 + n))
+            ins_el.set(qn("w:author"), "FileMate")
+            ins_el.set(qn("w:date"), ts)
+            ins_run = OxmlElement("w:r")
+            ins_text = OxmlElement("w:t")
+            ins_text.set(qn("xml:space"), "preserve")
+            ins_text.text = repl
+            ins_run.append(ins_text)
+            ins_el.append(ins_run)
+            del_el.addnext(ins_el)
+            n += 1
     if n == 0:
         return _fail("not_found", "文档里没找到「%s」。" % find)
     doc.save(str(target))
