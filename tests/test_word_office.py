@@ -165,11 +165,20 @@ def test_insert(docx, monkeypatch):
     assert r["reason"] == "insert"
 
 
-def test_delete(docx, monkeypatch):
+def test_delete_requires_confirmation(docx, monkeypatch):
     import config
     monkeypatch.setattr(config, "get_api_key", lambda: "k")
     r = WordModule.handle({"user_input": "删除 甲方是A型机",
                            "selected_files": [str(docx)]})
+    assert r["status"] == "needs_confirmation"
+    assert r["reason"] == "dangerous_op"
+
+
+def test_delete(docx, monkeypatch):
+    import config
+    monkeypatch.setattr(config, "get_api_key", lambda: "k")
+    r = WordModule.handle({"user_input": "删除 甲方是A型机",
+                           "selected_files": [str(docx)], "confirmed": True})
     assert r["status"] == "done"
     assert r["reason"] == "delete"
 

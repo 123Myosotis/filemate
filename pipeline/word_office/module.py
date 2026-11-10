@@ -222,6 +222,17 @@ class WordModule:
                 "operations": [{"op": "l1"}] if tier == "B" else _plan_ops(text)}
         plan = _apply_overlay(plan)
 
+        # 危险操作（delete）走确认（架构 §3：低置信/危险操作要弹窗）
+        if any(o.get("op") == "delete" for o in plan["operations"]):
+            if not request.get("confirmed"):
+                return _finish({
+                    "status": "needs_confirmation",
+                    "reason": "dangerous_op",
+                    "message": "删除是危险操作，请确认后再执行。",
+                    "user_actions": [{"label": "确认删除", "action": "confirm_delete"}],
+                    "plan_ref": None, "audit_ref": None,
+                }, stages)
+
         from .gate import pre_check
         pre = pre_check(plan)
         if not pre["ok"]:
@@ -460,6 +471,10 @@ def _exec_insert(target: Path, op: dict) -> dict:
     for p in _iter_paragraphs(doc):
         if anchor in p.text:
             new_p = doc.add_paragraph(content)
+            try:
+                new_p.style = p.style   # 继承锚点样式（格式一致）
+            except Exception:  # noqa: BLE001
+                pass
             p._p.addnext(new_p._p)
             n += 1
     if n == 0:
