@@ -21,19 +21,19 @@
 
 ---
 
-## Word op 落地（**4/6**）
+## Word op 落地（**6/6**）
 
 | op_type | 状态 | 说明 |
 |---|---|---|
 | `inspect`（读） | ✅ | 结构检查 |
 | `replace` | ✅ | run 级 + 跨 run 段落级 |
-| `insert` | ✅ | 锚点后插新段 |
-| `delete` | ✅ | 删含目标文本的**整段**（粒度粗） |
+| `insert` | ✅ | 锚点后插新段（**继承锚点样式**） |
+| `delete` | ✅ | 删含目标文本的**整段**（**危险 → 确认**） |
 | `format` | ✅ | **仅 run 级粗体/斜体** |
-| `move` | ❌ | 未做 |
-| `tracked_change` | ❌ | 未做 |
+| `move` | ✅ | **段级移动**（同段/找不到拒绝） |
+| `tracked_change` | ✅ | **w:del/w:ins 手拼 XML**（段级） |
 
-**4/6 已做**；`move` / `tracked_change` 未做。
+**6/6 已做**；`tracked_change` 的**段内格式会丢**（已知弊端，见 `docs/optimizations.md`）。
 
 ---
 
