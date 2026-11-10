@@ -3,6 +3,16 @@
 > **唯一架构文档**。只用 **A–E** 分层，不提 L0–L3（那是历史名，已废弃）。
 > 从上到下：用户 → 接入层 → 任务链 → 执行层（A–E）→ 记忆 → 输出。
 
+## 两个维度（**替代 L0–L3**）
+
+| 维度 | 用 | 量什么 |
+|---|---|---|
+| **任务** | **A–E**（§1） | 这个活**多重**（token / AI 强度） |
+| **改写** | **`op_type`**（`contracts`） | 这次**改什么**（replace / insert / delete / format / move / tracked_change） |
+
+**L0–L3 = 规格历史名**；**L2/L3 = `op_type` 的 `move` / `tracked_change` + 跨结构**。
+**不是"把 L0–L3 塞进 A–E"**（量的不是一回事）。
+
 ---
 
 ## 0. 规格对照（**权威规格**：`docs/specs/word_office_spec.md`）
