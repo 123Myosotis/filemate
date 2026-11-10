@@ -222,10 +222,19 @@ def test_move_not_found(docx, monkeypatch):
     assert r["reason"] == "not_found"
 
 
-def test_move_not_found(docx, monkeypatch):
+def test_tracked_change(docx, monkeypatch):
     import config
     monkeypatch.setattr(config, "get_api_key", lambda: "k")
-    r = WordModule.handle({"user_input": "把 不存在 移到 乙方是B型机 后面",
+    r = WordModule.handle({"user_input": "修订：把 甲方是A型机 改成 甲方是X型机",
+                           "selected_files": [str(docx)]})
+    assert r["status"] == "done"
+    assert r["reason"] == "tracked_change"
+
+
+def test_tracked_change_not_found(docx, monkeypatch):
+    import config
+    monkeypatch.setattr(config, "get_api_key", lambda: "k")
+    r = WordModule.handle({"user_input": "修订：把 不存在 改成 也不存在",
                            "selected_files": [str(docx)]})
     assert r["status"] == "failed"
     assert r["reason"] == "not_found"

@@ -154,6 +154,9 @@ _FORMAT_PATTERNS = (
 _MOVE_PATTERNS = (
     re.compile(r"(?:把|将)\s*(.+?)\s*(?:移到|移动到|挪到)\s*(.+?)\s*(后面|之后|后|前面|之前|前)"),
 )
+_TRACKED_PATTERNS = (
+    re.compile(r"(?:修订|留痕|记录修订)[：:]\s*(?:把|将)\s*(.+?)\s*(?:替换成|替换为|改成|改为|换成)\s*(.+?)(?:[。，,；;]|$)"),
+)
 
 
 def _plan_ops(text: str) -> list:
@@ -177,6 +180,13 @@ def _plan_ops(text: str) -> list:
             mode = "bold" if ("粗" in text) else "italic"
             if find:
                 return [{"op": "format", "find": find, "mode": mode}]
+    for pat in _TRACKED_PATTERNS:
+        m = pat.search(text)
+        if m:
+            find = m.group(1).strip().strip("「」\"' ")
+            repl = m.group(2).strip().strip("「」\"' ")
+            if find and find != repl:
+                return [{"op": "tracked_change", "find": find, "replace": repl}]
     for pat in _MOVE_PATTERNS:
         m = pat.search(text)
         if m:
@@ -452,6 +462,8 @@ def _execute(target: Path, state: dict, preds: dict, plan: dict) -> dict:
         return _exec_format(target, op)
     if op["op"] == "move":
         return _exec_move(target, op)
+    if op["op"] == "tracked_change":
+        return _exec_tracked_change(target, op)
 
     find, repl = op.get("find", ""), op.get("replace", "")
     before = _count_all(target, find)
@@ -588,4 +600,63 @@ def _exec_move(target: Path, op: dict) -> dict:
     return {"status": "done", "reason": "move",
             "message": "✅ 已把含「%s」的段落移到「%s」%s（写前备份：%s）。"
                        % (src, dst, "前面" if before else "后面", backup.name),
+            "plan_ref": None, "audit_ref": None, "user_actions": []}
+
+
+def _exec_tracked_change(target: Path, op: dict) -> dict:
+    """tracked_change：把含 `find` 的段落改成**修订痕迹**（`w:del` 原文 + `w:ins` 新文）。
+
+    **手拼 XML**——python-docx 不直接支持修订。
+    代价：该段落**内部格式会丢**（原文保留在 `w:delText` 里）。
+    """
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    find = str(op.get("find") or "").strip()
+    repl = str(op.get("replace") or "").strip()
+    if not find or find == repl:
+        return _fail("bad_plan", "tracked_change 参数不完整。")
+    backup = target.with_suffix(target.suffix + ".bak")
+    shutil.copy2(target, backup)
+    doc = Document(str(target))
+    ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    n = 0
+    for p in _iter_paragraphs(doc):
+        orig = p.text
+        if find not in orig:
+            continue
+        n += 1
+        # 清空原 run
+        for r in list(p.runs):
+            r._r.getparent().remove(r._r)
+        # w:del（原文）
+        del_el = OxmlElement("w:del")
+        del_el.set(qn("w:id"), str(9000 + n))
+        del_el.set(qn("w:author"), "FileMate")
+        del_el.set(qn("w:date"), ts)
+        del_run = OxmlElement("w:r")
+        del_text = OxmlElement("w:delText")
+        del_text.set(qn("xml:space"), "preserve")
+        del_text.text = orig
+        del_run.append(del_text)
+        del_el.append(del_run)
+        p._p.append(del_el)
+        # w:ins（新文）
+        ins_el = OxmlElement("w:ins")
+        ins_el.set(qn("w:id"), str(9500 + n))
+        ins_el.set(qn("w:author"), "FileMate")
+        ins_el.set(qn("w:date"), ts)
+        ins_run = OxmlElement("w:r")
+        ins_text = OxmlElement("w:t")
+        ins_text.set(qn("xml:space"), "preserve")
+        ins_text.text = orig.replace(find, repl)
+        ins_run.append(ins_text)
+        ins_el.append(ins_run)
+        p._p.append(ins_el)
+    if n == 0:
+        return _fail("not_found", "文档里没找到「%s」。" % find)
+    doc.save(str(target))
+    return {"status": "done", "reason": "tracked_change",
+            "message": "✅ 已以**修订**方式改 %d 段（原文保留在删除痕迹里；写前备份：%s）。"
+                       % (n, backup.name),
             "plan_ref": None, "audit_ref": None, "user_actions": []}

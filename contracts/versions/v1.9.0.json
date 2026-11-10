@@ -21,7 +21,8 @@
       "insert",
       "delete",
       "format",
-      "move"
+      "move",
+      "tracked_change"
     ],
     "budget": {
       "A": 0,
