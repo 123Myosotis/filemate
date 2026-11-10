@@ -224,6 +224,18 @@ class WordModule:
             })
         except Exception:  # noqa: BLE001
             pass
+        # 记忆（lazy，4.2）：执行后按"文件内容 hash"存一条（**不调 LLM**，用 state 的廉价摘要）
+        try:
+            from .memory import save_file_memory
+            from .state import file_sha256
+            save_file_memory(
+                file_sha256(target), str(target),
+                summary="段落 %d / 表格 %d" % (state["paragraphs"], len(state["tables"])),
+                keywords="、".join(
+                    sorted(state["styles"], key=lambda k: -state["styles"][k])[:5]),
+            )
+        except Exception:  # noqa: BLE001
+            pass
         return _finish(result, stages, warnings=warnings)
 
 

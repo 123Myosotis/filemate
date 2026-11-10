@@ -137,3 +137,18 @@ def test_evidence_written(docx, monkeypatch):
     assert r["status"] == "done"
     after = len(list(evidence.DIR.glob("*.json.gz")))
     assert after >= before + 1
+
+
+# ---- 阶段 4.2：handle 后写记忆 ----
+
+def test_memory_written(docx, monkeypatch):
+    import config
+    from pipeline.word_office import memory
+    from pipeline.word_office.state import file_sha256
+
+    monkeypatch.setattr(config, "get_api_key", lambda: "k")
+    WordModule.handle({"user_input": "检查结构", "selected_files": [str(docx)]})
+    m = memory.get_file_memory(file_sha256(docx))
+    assert m is not None
+    assert m["summary"].startswith("段落")
+    assert m["path"]
