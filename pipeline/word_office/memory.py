@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import sqlite3
 import time
@@ -46,6 +47,11 @@ _DDL = [
         locator TEXT NOT NULL,
         snippet TEXT,
         status TEXT NOT NULL DEFAULT 'active',
+        created_at TEXT
+    )""",
+    """CREATE TABLE IF NOT EXISTS memory_vec (
+        hash TEXT PRIMARY KEY,
+        vec TEXT NOT NULL,
         created_at TEXT
     )""",
 ]
@@ -255,6 +261,63 @@ def set_status(term_id: str, status: str) -> bool:
 
 # ---------------- 混合召回（proto：FTS5 + LIKE → RRF） ----------------
 
+def save_vec(hash: str, vec: list) -> None:
+    """存向量（JSON）；hash 空 / vec 空 → 跳过。"""
+    if not hash or not vec:
+        return
+    init_memory()
+    conn = _connect()
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO memory_vec(hash, vec, created_at) VALUES(?,?,?)",
+            (hash, json.dumps([float(x) for x in vec]), _now()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _get_vec(hash: str) -> list:
+    init_memory()
+    conn = _connect()
+    try:
+        row = conn.execute("SELECT vec FROM memory_vec WHERE hash=?", (hash,)).fetchone()
+        if not row:
+            return []
+        try:
+            return [float(x) for x in json.loads(row["vec"])]
+        except Exception:  # noqa: BLE001
+            return []
+    finally:
+        conn.close()
+
+
+def _vec_hits(q: str, k: int) -> list[str]:
+    """向量通道：query → embed → 与库内向量算余弦。**没 Key 返回空**。"""
+    try:
+        from ai import embed
+        if not embed.is_available():
+            return []
+        qv = embed.embed(q)
+        if not qv:
+            return []
+    except Exception:  # noqa: BLE001
+        return []
+    init_memory()
+    conn = _connect()
+    try:
+        rows = conn.execute("SELECT hash FROM memory_vec").fetchall()
+    finally:
+        conn.close()
+    scored = []
+    for r in rows:
+        v = _get_vec(r["hash"])
+        if v:
+            scored.append((r["hash"], embed.cosine(qv, v)))
+    scored.sort(key=lambda kv: -kv[1])
+    return [h for h, _ in scored[:k]]
+
+
 def _fts_hits(q: str, k: int) -> list[str]:
     init_memory()
     conn = _connect()
@@ -296,6 +359,13 @@ def recall(query: str, limit: int = 10, rrf_k: int = 60) -> list[dict]:
     if not q:
         return []
     channels = [_fts_hits(q, limit * 3), _like_hits(q, limit * 3)]
+    # 第三路（向量）——**有 Key 才加**，没有就是两路
+    try:
+        vec = _vec_hits(q, limit * 3)
+        if vec:
+            channels.append(vec)
+    except Exception:  # noqa: BLE001
+        pass
     scores: dict[str, float] = {}
     for ch in channels:
         for rank, h in enumerate(ch):

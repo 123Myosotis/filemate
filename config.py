@@ -65,6 +65,7 @@ PARAM_DEFAULTS = {
     # ---- API 客户端（智谱 OpenAI 兼容：base 配到 v4，客户端自动拼 /chat/completions） ----
     "api.base_url": "https://open.bigmodel.cn/api/paas/v4",
     "api.model": "glm-4-flash",
+    "api.embedding_key": "",          # SiliconFlow Key（空则向量通道不启用）
     "api.temperature": 0.7,
     "api.max_tokens": 8192,
     "api.timeout": 120,               # 秒

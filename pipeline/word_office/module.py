@@ -207,6 +207,14 @@ class WordModule:
 
         state = scan(target)
         stages.append({"name": "scan", "status": "ok", "detail": "%d 段" % state["paragraphs"]})
+        # 术语自动挖掘（规则，不调 LLM）——扫完就挖，落库当"候选"
+        try:
+            from .memory import mine_and_save
+            doc = Document(str(target))
+            body = "\n".join(p.text for p in doc.paragraphs if p.text.strip())[:20000]
+            mine_and_save(body)
+        except Exception:  # noqa: BLE001
+            pass
         preds = predicates(state)
         tier = _decide_tier(text, state, preds)
         if not is_clean(preds) and tier == "A":
@@ -249,12 +257,12 @@ class WordModule:
         if tier == "B":
             related = []
             try:
-                from .memory import get_file_memory, search_memory
+                from .memory import get_file_memory, recall
                 from .state import file_sha256
                 self_mem = get_file_memory(file_sha256(target))
                 if self_mem:
                     related.append(self_mem)
-                related.extend(search_memory(text))
+                related.extend(recall(text))
             except Exception:  # noqa: BLE001
                 pass
             result = _exec_l1(target, state, preds, text, related=related)
