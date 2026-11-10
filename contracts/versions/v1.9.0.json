@@ -26,6 +26,7 @@
       "D": 32000,
       "E": 4000
     },
+    "memory_related_max": 3,
     "note": "Word 编辑业务线；A–E 任务级；接入层共享、执行层独立（不注册 capabilities.py）。"
   },
   "min_acceptable_version": "v1.1.0",

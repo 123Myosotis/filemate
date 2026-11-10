@@ -251,6 +251,33 @@ class WordModule:
         return _finish(result, stages, warnings=warnings)
 
 
+def _memory_related_max() -> int:
+    """记忆上下文条数上限：**契约**（不写死）；缺失回退 3。"""
+    try:
+        from pipeline.synth_contract.registry import load_contract
+        n = (load_contract().data.get("word_office") or {}).get("memory_related_max", 3)
+        return max(0, int(n or 0))
+    except Exception:  # noqa: BLE001
+        return 3
+
+
+def _memory_blob(related) -> str:
+    """拼接 related → "摘要（关键词）"；**条数**读契约，**长度**受 prompt 预算约束。"""
+    if not related:
+        return ""
+    picked = list(related)[:_memory_related_max()]
+    text = "；".join(
+        "%s（%s）" % (r.get("summary") or r.get("hash", "")[:8],
+                     r.get("keywords") or "")
+        for r in picked)
+    try:
+        from ai.context_budget import effective_input_chars
+        cap = int(effective_input_chars(reserved_output=600) * 0.2)  # 记忆段最多占 20%
+        return text[:cap]
+    except Exception:  # noqa: BLE001
+        return text
+
+
 def _portrait(target: Path, state: dict, limit: int = 30, related=None) -> str:
     """文档画像：段落数 + 标题样式 + 前 N 段正文（轻量，不传全文）。"""
     doc = Document(str(target))
@@ -259,11 +286,9 @@ def _portrait(target: Path, state: dict, limit: int = 30, related=None) -> str:
     base = "段落数 %d；标题样式：%s\n正文前 %d 段：\n%s" % (
         state["paragraphs"], "、".join(heads) or "无", len(paras),
         "\n".join("- " + p[:200] for p in paras))
-    if related:
-        base += "\n历史相关文件：" + "；".join(
-            "%s（%s）" % (r.get("summary") or r.get("hash", "")[:8],
-                         r.get("keywords") or "")
-            for r in related[:3])
+    blob = _memory_blob(related)
+    if blob:
+        base += "\n历史相关文件：" + blob
     return base
 
 
