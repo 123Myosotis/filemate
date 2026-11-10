@@ -238,3 +238,17 @@ def test_tracked_change_not_found(docx, monkeypatch):
                            "selected_files": [str(docx)]})
     assert r["status"] == "failed"
     assert r["reason"] == "not_found"
+
+
+def test_tracked_change_run_level(docx, monkeypatch):
+    """run 级：`w:delText` 只含 find，不含整段。"""
+    import config
+    import re
+    import zipfile
+    monkeypatch.setattr(config, "get_api_key", lambda: "k")
+    r = WordModule.handle({"user_input": "修订：把 甲方是A型机 改成 甲方是X型机",
+                           "selected_files": [str(docx)]})
+    assert r["status"] == "done"
+    xml = zipfile.ZipFile(str(docx)).read("word/document.xml").decode("utf-8")
+    texts = re.findall(r"<w:delText[^>]*>([^<]*)</w:delText>", xml)
+    assert texts == ["甲方是A型机"]

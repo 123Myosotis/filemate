@@ -520,7 +520,7 @@ def _exec_insert(target: Path, op: dict) -> dict:
 
 
 def _exec_delete(target: Path, op: dict) -> dict:
-    """delete：删除**含目标文本的整段**。"""
+    """delete：只删**目标文本**（run 级）；整段删空才删段。"""
     find = str(op.get("find") or "").strip()
     if not find:
         return _fail("bad_plan", "delete 缺少目标文本。")
@@ -529,15 +529,23 @@ def _exec_delete(target: Path, op: dict) -> dict:
     doc = Document(str(target))
     n = 0
     for p in list(_iter_paragraphs(doc)):
-        if find in p.text:
-            p._p.getparent().remove(p._p)
-            n += 1
+        orig = p.text
+        if find not in orig:
+            continue
+        n += orig.count(find)
+        rest = orig.replace(find, "")
+        if not rest.strip():
+            p._p.getparent().remove(p._p)   # 整段删空 → 删段
+            continue
+        for r in list(p.runs):
+            r._r.getparent().remove(r._r)
+        p.add_run(rest)
     if n == 0:
         return _fail("not_found", "文档里没找到「%s」。" % find)
     doc.save(str(target))
     return {"status": "done", "reason": "delete",
-            "message": "✅ 删除含「%s」的 %d 段（写前备份：%s）。"
-                       % (find, n, backup.name),
+            "message": "✅ 删除 %d 处「%s」（只删文字，不删段；写前备份：%s）。"
+                       % (n, find, backup.name),
             "plan_ref": None, "audit_ref": None, "user_actions": []}
 
 
@@ -604,11 +612,7 @@ def _exec_move(target: Path, op: dict) -> dict:
 
 
 def _exec_tracked_change(target: Path, op: dict) -> dict:
-    """tracked_change：把含 `find` 的段落改成**修订痕迹**（`w:del` 原文 + `w:ins` 新文）。
-
-    **手拼 XML**——python-docx 不直接支持修订。
-    代价：该段落**内部格式会丢**（原文保留在 `w:delText` 里）。
-    """
+    """tracked_change：**run 级**修订——只把 `find` 那段包进 `w:del`/`w:ins`，前后文保留。"""
     from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
 
@@ -620,16 +624,32 @@ def _exec_tracked_change(target: Path, op: dict) -> dict:
     shutil.copy2(target, backup)
     doc = Document(str(target))
     ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+    def _plain_run(text: str, pid: str):
+        if not text:
+            return None
+        r = OxmlElement("w:r")
+        t = OxmlElement("w:t")
+        t.set(qn("xml:space"), "preserve")
+        t.text = text
+        r.append(t)
+        return r
+
     n = 0
     for p in _iter_paragraphs(doc):
         orig = p.text
         if find not in orig:
             continue
+        idx = orig.index(find)
+        before, after = orig[:idx], orig[idx + len(find):]
         n += 1
-        # 清空原 run
         for r in list(p.runs):
             r._r.getparent().remove(r._r)
-        # w:del（原文）
+        # 前文（普通 run）
+        rb = _plain_run(before, "b")
+        if rb is not None:
+            p._p.append(rb)
+        # w:del（只包 find）
         del_el = OxmlElement("w:del")
         del_el.set(qn("w:id"), str(9000 + n))
         del_el.set(qn("w:author"), "FileMate")
@@ -637,11 +657,11 @@ def _exec_tracked_change(target: Path, op: dict) -> dict:
         del_run = OxmlElement("w:r")
         del_text = OxmlElement("w:delText")
         del_text.set(qn("xml:space"), "preserve")
-        del_text.text = orig
+        del_text.text = find
         del_run.append(del_text)
         del_el.append(del_run)
         p._p.append(del_el)
-        # w:ins（新文）
+        # w:ins（只放 replace）
         ins_el = OxmlElement("w:ins")
         ins_el.set(qn("w:id"), str(9500 + n))
         ins_el.set(qn("w:author"), "FileMate")
@@ -649,10 +669,14 @@ def _exec_tracked_change(target: Path, op: dict) -> dict:
         ins_run = OxmlElement("w:r")
         ins_text = OxmlElement("w:t")
         ins_text.set(qn("xml:space"), "preserve")
-        ins_text.text = orig.replace(find, repl)
+        ins_text.text = repl
         ins_run.append(ins_text)
         ins_el.append(ins_run)
         p._p.append(ins_el)
+        # 后文（普通 run）
+        ra = _plain_run(after, "a")
+        if ra is not None:
+            p._p.append(ra)
     if n == 0:
         return _fail("not_found", "文档里没找到「%s」。" % find)
     doc.save(str(target))
