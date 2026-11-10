@@ -203,7 +203,19 @@ class WordModule:
                            stages, warnings=warnings)
 
         if tier == "B":
-            result = _exec_l1(target, state, preds, text)
+            related = []
+            try:
+                from .memory import get_file_memory, search_memory
+                from .state import file_sha256
+                self_mem = get_file_memory(file_sha256(target))
+                if self_mem:
+                    related.append(self_mem)
+                related.extend(search_memory(text))
+            except Exception:  # noqa: BLE001
+                pass
+            result = _exec_l1(target, state, preds, text, related=related)
+            if related:
+                result.setdefault("memory", related)
         else:
             result = _execute(target, state, preds, plan)
         _audit({"path": str(target), "tier": tier, "ops": len(plan["operations"]),
@@ -239,24 +251,31 @@ class WordModule:
         return _finish(result, stages, warnings=warnings)
 
 
-def _portrait(target: Path, state: dict, limit: int = 30) -> str:
+def _portrait(target: Path, state: dict, limit: int = 30, related=None) -> str:
     """文档画像：段落数 + 标题样式 + 前 N 段正文（轻量，不传全文）。"""
     doc = Document(str(target))
     paras = [p.text.strip() for p in doc.paragraphs if p.text.strip()][:limit]
     heads = [k for k in state["styles"] if "Heading" in k or k == "Title"]
-    return "段落数 %d；标题样式：%s\n正文前 %d 段：\n%s" % (
+    base = "段落数 %d；标题样式：%s\n正文前 %d 段：\n%s" % (
         state["paragraphs"], "、".join(heads) or "无", len(paras),
         "\n".join("- " + p[:200] for p in paras))
+    if related:
+        base += "\n历史相关文件：" + "；".join(
+            "%s（%s）" % (r.get("summary") or r.get("hash", "")[:8],
+                         r.get("keywords") or "")
+            for r in related[:3])
+    return base
 
 
-def _exec_l1(target: Path, state: dict, preds: dict, user_input: str) -> dict:
+def _exec_l1(target: Path, state: dict, preds: dict, user_input: str,
+             related=None) -> dict:
     """L1：AI 只出 {summary, ops:[{find,replace}]}；本地白名单 + 备份 + 结构校验 + 内容对账。"""
     api_key = config.get_api_key()
     if not api_key:
         return _fail("no_key", "L1 需要 API Key，请先在设置里配置。")
     from .ai import call_l1
 
-    data = call_l1(user_input, _portrait(target, state), api_key)
+    data = call_l1(user_input, _portrait(target, state, related=related), api_key)
     if not isinstance(data, dict):
         return _fail("ai_failed", "AI 没有返回可用结果。")
 
