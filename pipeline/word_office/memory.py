@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import sqlite3
 import time
 from pathlib import Path
@@ -250,3 +251,45 @@ def set_status(term_id: str, status: str) -> bool:
         return cur.rowcount > 0
     finally:
         conn.close()
+
+
+# ---------------- 术语自动挖掘（**规则，不调 LLM**） ----------------
+
+_ACRONYM = re.compile(r"\b[A-Z][A-Z0-9]{1,}\b")
+_QUOTED = re.compile(r"[「『《\"']([^「」『』《》\"']{2,20})[」』》\"']")
+_ZH_SEG = re.compile(r"[\u4e00-\u9fff]{2,}")
+
+
+def mine_terms(text: str, min_freq: int = 3) -> list[str]:
+    """挖候选术语：英文缩写 + 引号内 + 重复 n-gram（2–4 字，频率 ≥ min_freq）。"""
+    if not text:
+        return []
+    cands: list[str] = []
+    cands += _ACRONYM.findall(text)
+    cands += _QUOTED.findall(text)
+    cnt: dict[str, int] = {}
+    for seg in _ZH_SEG.findall(text):
+        for n in (2, 3, 4):
+            for i in range(len(seg) - n + 1):
+                g = seg[i:i + n]
+                cnt[g] = cnt.get(g, 0) + 1
+    freq = [g for g, c in cnt.items() if c >= int(min_freq)]
+    # 只留最长：若 g 是另一个候选的子串，丢弃（避免"设备台/备台账"这类碎片）
+    freq = [g for g in freq if not any(g != h and g in h for h in freq)]
+    cands += freq
+    seen: set = set()
+    out: list[str] = []
+    for c in cands:
+        c = str(c).strip()
+        if c and c not in seen:
+            seen.add(c)
+            out.append(c)
+    return out
+
+
+def mine_and_save(text: str, min_freq: int = 3) -> list[str]:
+    """挖术语并写入 `memory_term`；返回写入的术语。"""
+    terms = mine_terms(text, min_freq=min_freq)
+    for t in terms:
+        upsert_term(t, aliases="", weight=1.0)
+    return terms

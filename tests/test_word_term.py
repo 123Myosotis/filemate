@@ -44,3 +44,15 @@ def test_lifecycle():
     assert memory.set_status(tid, "invalidated") is True
     assert memory.get_term("test-x")["status"] == "invalidated"
     assert memory.set_status(tid, "bad") is False
+
+
+def test_mine_terms():
+    text = "设备台账：API 接口，SQL 查询。「数据清洗」是核心。设备台账，设备台账，设备台账。"
+    terms = memory.mine_terms(text)
+    assert "API" in terms
+    assert "SQL" in terms
+    assert "数据清洗" in terms
+    assert "设备台账" in terms
+    # 碎片被过滤
+    assert "备台" not in terms
+    assert "设备台" not in terms
