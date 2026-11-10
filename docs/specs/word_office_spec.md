@@ -18,7 +18,7 @@
 |---|---|---|
 | D1 | 模型是真正瓶颈（QP 一次通过率约 9%，硬数据），草案未覆盖 | §八.3 新增「模型能力 spike」，与扫描器并列为第 0 步 |
 | D2 | 写回必须后置，v1 先只做「只读」 | §四 implemented_tiers=[]、implemented_capabilities=只读；§十.1 落地清单砍到只读 |
-| D3 | 别一上来造 Word 编辑器（L0-L3+七状态机+事务=迷你编辑引擎） | 收口：先只读切片验证用户需求，再决定是否投入事务层 |
+| D3 | 别一上来造 Word 编辑器（A–E + op + 七状态机 + 事务 = 迷你编辑引擎） | 收口：先只读切片验证用户需求，再决定是否投入事务层 |
 
 ### v0.4（相对 v0.3，逐条对应第三轮评审）
 
@@ -64,7 +64,7 @@
 | 失败反馈闭环 | `_correct()` + correction_rounds | 同 | 🟢 复用 |
 | 目标定位 | 目录/文件路径解析 | 「当前文档句柄」 | 🔴 本质不同，重设计 |
 | 方案生成 | AI 出 JSON 计划 | AI 出 PatchSet/方案 | 🟢 复用「AI 出 JSON + 本地校验」 |
-| 档位/算子判定 | 契约 operator_set | 决策表 L0–L3 | 🔴 本质不同（算子 vs 风险档位） |
+| 档位/算子判定 | 契约 operator_set | 决策表 A–E + op | 🔴 本质不同（算子 vs 风险档位） |
 | 语义对账 | `calc replay` + `row_accounting` | 效果重放 + 内容记账 | 🟢 复用（对账是通用的） |
 | 空值三分类 | `classify_empty` | 谓词三态 | 🟢 复用「不确定即拒绝」模式 |
 | 代价前置 | `gate_step_budget` | `estimate_cost` | 🟢 复用 |
@@ -175,7 +175,7 @@ tool 只能是以下之一：
          │ WordModule.handle(request, ui_callback)   ←【同步阻塞 + 可中断】
          ▼
 ┌─ Word 模块内部（独立执行链，不经过 task_runner）────────────────────────┐
-│  粗识别 → 只读结构探测 → 精绑定 → L0 前置路由                              │
+│  粗识别 → 只读结构探测 → 精绑定 → A 前置路由                              │
 │    → 完整扫描 → 方案构造(决策表) → Overlay → preflight                     │
 │    → 方案卡片(ui_callback 阻塞等确认) → 逐 op 执行 → 写入后校验            │
 │  每个 op 前：control.checkpoint()  ；每 op 后：save_checkpoint()          │
@@ -228,7 +228,7 @@ def handle(request: WordRequest, ui_callback: Callable) -> WordResult:
 - **v1 不支持「等用户确认中途续跑」**：用户取消 = 放弃本次，checkpoint 清空。v2 再支持从「等确认」恢复（需持久化 Plan + 已执行 op 状态）。
 - `_DispatchWorker` 每次任务用**独立 QThread**，不是线程池。一个 Word 任务占一个线程，用户不确认时线程阻塞，但不影响表格/文件任务。
 - **超时保护**：handle() 整体超时上限 30 分钟，超时强制返回 cancelled 并清理 checkpoint，防线程永久占用。
-- v2 事件驱动的触发条件：当「用户确认停留时间导致线程占用」成为实测问题，改成 `WordModuleSession + step()` 推进，状态存 session。**v1 不要提前做**——事件驱动要把状态机拆成可序列化状态，L2/L3 未实现时做会过度设计。
+- v2 事件驱动的触发条件：当「用户确认停留时间导致线程占用」成为实测问题，改成 `WordModuleSession + step()` 推进，状态存 session。**v1 不要提前做**——事件驱动要把状态机拆成可序列化状态，C/D 未实现时做会过度设计。
 
 ---
 
@@ -244,12 +244,12 @@ def handle(request: WordRequest, ui_callback: Callable) -> WordResult:
   "word_office": {
     "schema_version": "1",
     "implemented_capabilities": ["readonly_extract", "readonly_structured_summary", "readonly_proofread_suggest"],  // ← v1 只读能力（唯一事实来源）
-    "implemented_tiers": [],                     // ← 写回分层 L0-L3 全部后置（v1 不做写回）
-    "tiers_by_version": {                        // ← 仅作审计参考（写回分层，后置）
+    "implemented_tasks": [],                     // ← 写回分层全部后置（v1 不做写回）
+    "tasks_by_version": {                        // ← 仅作审计参考（写回分层，后置）
       "v1.10.0": [],
-      "v1.11.0": ["L0", "L1"],
-      "v1.12.0": ["L0", "L1", "L2"],
-      "v1.13.0": ["L0", "L1", "L2", "L3"]
+      "v1.11.0": ["A", "B"],
+      "v1.12.0": ["A", "B", "C"],
+      "v1.13.0": ["A", "B", "C", "D"]
     },
     "writeback_unlock_conditions": {             // ← 写回解锁硬门槛（两项 spike 都达标）
       "scanner_spike_proven": "read_write_without_corruption",
@@ -258,7 +258,8 @@ def handle(request: WordRequest, ui_callback: Callable) -> WordResult:
 
     "enums": {
       "intent_type": ["rewrite", "format_clean", "proofread", "translate", "summarize", "extract", "outline", "review", "compare", "other"],
-      "tier": ["L0", "L1", "L2", "L3"],
+      "task": ["A", "B", "C", "D", "E"],
+      "op": ["replace", "insert", "delete", "format", "move", "tracked_change"],
       "confirmation_level": ["silent", "light", "modal"],
       "operation_scope": ["selection", "single_unit", "multi_unit", "full_document"],
       "predicate_tristate": ["true", "false", "unknown"],
@@ -294,20 +295,20 @@ def handle(request: WordRequest, ui_callback: Callable) -> WordResult:
     },
 
     "decision_table": {
-      "version": "dt-1",
+      "version": "dt-2",
       "rules": [
-        {"rule_id": "R_L1_PLAIN_TEXT_REPLACE", "tier": "L1",
+        {"rule_id": "R_B_PLAIN_TEXT_REPLACE", "task": "B", "op": "replace",
          "intent_type": ["rewrite", "proofread", "translate"],
          "fidelity_constraints": [], "complexity_class": ["simple", "medium"],
          "binding_confidence_min": 0.7, "operation_scope": ["selection", "single_unit"],
-         "reason_code": "RSN_L1_WHITELIST_TEXT_REPLACE", "requires_confirmation": "light"},
-        {"rule_id": "R_L2_CROSS_STRUCTURE", "tier": "L2", "implemented": false,
+         "reason_code": "RSN_B_WHITELIST_TEXT_REPLACE", "requires_confirmation": "light"},
+        {"rule_id": "R_C_CROSS_STRUCTURE", "task": "C", "op": "move", "implemented": false,
          "since_version": "v1.11.0", "intent_type": ["outline", "compare"],
-         "reason_code": "RSN_L2_CROSS_STRUCTURE", "requires_confirmation": "light"},
-        {"rule_id": "R_L3_HIGH_FIDELITY", "tier": "L3", "implemented": false,
+         "reason_code": "RSN_C_CROSS_STRUCTURE", "requires_confirmation": "light"},
+        {"rule_id": "R_D_HIGH_FIDELITY", "task": "D", "op": "tracked_change", "implemented": false,
          "since_version": "v1.12.0",
          "fidelity_constraints": ["revision", "comment", "field", "content_control"],
-         "reason_code": "RSN_L3_HIGH_FIDELITY", "requires_confirmation": "modal"}
+         "reason_code": "RSN_D_HIGH_FIDELITY", "requires_confirmation": "modal"}
       ]
     },
 
@@ -323,7 +324,7 @@ def handle(request: WordRequest, ui_callback: Callable) -> WordResult:
 
     "capability_manifest": {
       "version": "cm-1",
-      "base": {"L1": {"op_types": ["replace", "suggest_only"],
+      "base": {"B": {"op_types": ["replace", "suggest_only"],
                      "write_whitelist": ["plain_text_replace", "suggestion_only", "readonly_mark"],
                      "rejected": ["comment", "highlight", "tracked_change", "content_control", "bookmark"]}},
       "deployment_overrides": {
@@ -403,7 +404,7 @@ Word 1.1 总流程                     FileMate 同构锚点           归类
 ③ 精绑定（target_hints→ref）  = 无直接对应（FileMate 表格无此步）    🔴 重设计
    补：原话锚定 utterance_span 必须是真实子串（仿 qr.span_covered）  [点5]
      ↓
-④ L0 独立前置路由            = dispatcher._wants_table_synthesize 短路 🟢 复用
+④ A 独立前置路由            = dispatcher._wants_table_synthesize 短路 🟢 复用
    补：谓词三态 unknown 保守（仿 classify_empty 的 unclassified 拒绝）[点3]
    补：命中即短路，绝不绕回 AI（仿 want_synth_early 纪律）          [点1]
      ↓
@@ -435,7 +436,7 @@ Word 1.1 总流程                     FileMate 同构锚点           归类
 
 | # | 通用点 | 1.1 版有对应机制？ | 补在哪一步 | 归类 |
 |---|---|---|---|---|
-| 1 | 快通道短路（want_synth_early） | 有（L0 前置路由） | ④ 强化短路纪律 | 🟢 复用 |
+| 1 | 快通道短路（want_synth_early） | 有（A 前置路由） | ④ 强化短路纪律 | 🟢 复用 |
 | 2 | 白名单 + 结构化兜底 | **缺** | ① 粗识别 | 🟢 复用 |
 | 3 | 谓词三态≈空值五分类 | 有（谓词三态） | ④ 强化「未分类即拒绝」 | 🟢 复用 |
 | 4 | verifiable_basis 四要素对账 | 有（效果重放，未统一） | ⑧/⑩ 统一 | 🟢 复用 |
@@ -538,7 +539,7 @@ def validate_word_claim(claim, doc_before, doc_after) -> ValidationResult:
 
 ## 八、第 0 步：两项 spike（扫描器 + 模型能力）
 
-> v0.5 把「模型 span 精确输出能力」提升为与「扫描器」并列的第 0 步 spike。**两者都达标，写回（L0–L3）才解锁。** 扫描器是地基（L0 谓词全依赖它）；模型是瓶颈（有硬数据，见 8.3）。
+> v0.5 把「模型 span 精确输出能力」提升为与「扫描器」并列的第 0 步 spike。**两者都达标，写回（A–E + op）才解锁。** 扫描器是地基（A 谓词全依赖它）；模型是瓶颈（有硬数据，见 8.3）。
 
 ### 8.1 扫描器 spike 范围表（建议 1 周内完成）
 
@@ -557,7 +558,7 @@ def validate_word_claim(claim, doc_before, doc_after) -> ValidationResult:
 
 ### 8.2 扫描器 spike 结论（写死）
 
-- **方案 B 可行且性能达标** → 写回有基础；可落 L2 受控写回、L3 事务层。
+- **方案 B 可行且性能达标** → 写回有基础；可落 C 受控写回、D 事务层。
 - **只有方案 A 可行** → 写回缩水为「只支持无修订/无控件/无交叉引用的简单文档」；遇到保真约束直接拒绝（`scan_capability: unsupported`）。
 - **三种都不达标** → 写回彻底放弃，只做只读。
 
@@ -570,7 +571,7 @@ def validate_word_claim(claim, doc_before, doc_after) -> ValidationResult:
 - **spike 内容**：拿一批真实 Word 指令，测模型**一次产出「可机械验证的 span 级 JSON」的比例**。
 - **验收指标（写死）**：一次通过率要**显著高于 9% 基线**，否则内容记账/效果重放是空中楼阁。
 
-**两项 spike 都达标，写回（L0–L3）才解锁。**
+**两项 spike 都达标，写回（A–E + op）才解锁。**
 
 ---
 
@@ -585,7 +586,7 @@ def validate_word_claim(claim, doc_before, doc_after) -> ValidationResult:
 - 文档格式识别在接入层已完成（`intent_router` 按 `.docx` 后缀分流），不需 `file_parser` 再识别。
 - **唯一复用点**：文件 sha256 指纹计算，作为纯工具函数复用，不经过 `file_parser` 的解析流程。
 
-**能力重叠的避让（写死）**：当前 docx 已有一条可用的「文档摘要」链路（`cap_parse` 拍平成 text → `cap_analyze` 全文摘要），已被验收。Word 模块 **v1 只做 file_parser 完全不覆盖的新能力**（写回/编辑/排版/审阅），**避开与已有「文档摘要」正面抢**。「总结文档」是否迁移到 Word L1，是后续独立的替换决策，**不在 v1 范围**；stage1-4 下线单独立项，与 Word 接入解耦。
+**能力重叠的避让（写死）**：当前 docx 已有一条可用的「文档摘要」链路（`cap_parse` 拍平成 text → `cap_analyze` 全文摘要），已被验收。Word 模块 **v1 只做 file_parser 完全不覆盖的新能力**（写回/编辑/排版/审阅），**避开与已有「文档摘要」正面抢**。「总结文档」是否迁移到 Word B，是后续独立的替换决策，**不在 v1 范围**；stage1-4 下线单独立项，与 Word 接入解耦。
 
 意义：避免「同一份 docx，file_parser 拍一遍给 stage1-4，Word 模块又读一遍结构」的双重解析，也避免 stage1-4 的文本结果被 Word 模块误用的隐性耦合。
 
@@ -610,7 +611,7 @@ def validate_word_claim(claim, doc_before, doc_after) -> ValidationResult:
 | 8 | 契约分区懒加载 `load_contract_skeleton`/`load_partition`（§四.2） | 🟢 复用改造 |
 | 9 | file_parser 边界声明落地（§九）；「结构感知摘要」是新能力，「拍平全文摘要」继续走 cap_analyze 不迁移；stage1-4 下线单独立项 | 🟢 复用改造 |
 
-> **写回（L0–L3）另起一个迭代**，解锁条件 = 两项 spike 双达标（§八.3），不在本 v1 清单内。
+> **写回（A–E + op）另起一个迭代**，解锁条件 = 两项 spike 双达标（§八.3），不在本 v1 清单内。
 
 ### 10.2 三处真·重设计的成本单列（其余「复用」项是小改）
 
@@ -626,11 +627,11 @@ def validate_word_claim(claim, doc_before, doc_after) -> ValidationResult:
 ### 10.3 落地提醒（不阻塞 v1，但需单独拍板）
 
 1. **v1 只读不需要 handle() 阻塞确认**：只读链路（提取/摘要/校对建议）是「一次性出结果」，不涉及方案卡片等用户确认。§三.3 的「同步阻塞 + 可中断回调」是**写回**才需要的机制，随写回一起后置。
-2. **v1 只读用单模型即可**：当前仅一个 GLM 客户端（`ai/client.py`，默认 glm-4-flash）。只读提取/摘要对模型能力要求低于写回，单模型够用；「L1 小模型 / L2 中档 / L3 强模型」的档位配置是写回才需要的新基建。
+2. **v1 只读用单模型即可**：当前仅一个 GLM 客户端（`ai/client.py`，默认 glm-4-flash）。只读提取/摘要对模型能力要求低于写回，单模型够用；「B 小模型 / C 中档 / D 强模型」的档位配置是写回才需要的新基建。
 3. **模型能力是第 0 步风险**：QP 一次通过率约 9%（见 §八.3），只读场景的「提取完整性」「摘要锚定」虽比写回宽松，仍需在 spike 里验证模型能否稳定产出可校验 JSON。
 
 ---
 
 ## 十一、一句话收口
 
-> v0.5 用硬数据（QP 一次通过率约 9%）修正了范围判断：**模型 span 精确输出能力与扫描器并列为第 0 步两项 spike，v1 从「L0+L1 写回」砍到「只读 Word 理解」（提取/结构摘要/校对建议），写回后置、双 spike 达标才解锁**。架构层（tool 短路、不经过 task_runner）已在前几轮确认成立，不改。最终路径：先只读切片验证用户是否真要「在文档里改」，再决定是否投入 L0–L3 事务层——不反着来先把迷你编辑引擎架好，再发现小模型吐不出可机械验证的 span。
+> v0.5 用硬数据（QP 一次通过率约 9%）修正了范围判断：**模型 span 精确输出能力与扫描器并列为第 0 步两项 spike，v1 从「A+B 写回」砍到「只读 Word 理解」（提取/结构摘要/校对建议），写回后置、双 spike 达标才解锁**。架构层（tool 短路、不经过 task_runner）已在前几轮确认成立，不改。最终路径：先只读切片验证用户是否真要「在文档里改」，再决定是否投入 A–E 事务层——不反着来先把迷你编辑引擎架好，再发现小模型吐不出可机械验证的 span。
