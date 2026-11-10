@@ -56,3 +56,13 @@ def test_touch():
 def test_not_found():
     assert memory.get_file_memory("test-none") is None
     assert memory.search_memory("肯定没有这个词zzz") == []
+
+
+def test_session_last():
+    from pipeline.word_office import session
+
+    session.clear()
+    session.remember({"file": "x.docx", "tier": "A"})
+    assert session.last()["file"] == "x.docx"
+    session.clear()
+    assert session.last() == {}

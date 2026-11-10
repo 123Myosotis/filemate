@@ -248,6 +248,13 @@ class WordModule:
             )
         except Exception:  # noqa: BLE001
             pass
+        # 即时记忆（4.4）：记住"最近一次任务"，供多轮/追问
+        try:
+            from .session import remember
+            remember({"file": str(target), "tier": tier,
+                      "user_input": text, "status": result.get("status")})
+        except Exception:  # noqa: BLE001
+            pass
         return _finish(result, stages, warnings=warnings)
 
 
