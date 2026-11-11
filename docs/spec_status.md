@@ -6,29 +6,32 @@
 >
 > **L0–L3 是规格历史名，已废弃**；**L2/L3 = `op_type` 的 `move`/`tracked_change` + 跨结构**。
 
+---
+
+## 一、规格条目对照
+
 | 规格里的 | 状态 | 说明 |
 |---|---|---|
 | **L0**（确定性） | ✅ | = **A 级** + `replace` / `inspect` |
 | **L1**（轻 AI） | ✅ | = **B 级** + `l1` |
-| **L2**（跨结构语义） | ❌ | = **跨结构 `move` / `replace`**（未做） |
-| **L3**（事务层） | ❌ | = **`tracked_change`**（未做） |
-| 九对象 | ✅ **9/9（全用）** | `objects.py`：Intent/DocumentState/Plan/**PatchSet**/**ToolRegistry**/**CapabilityManifest**/**ConfirmationOverlay**/**IntermediateArtifact**/**RedactionPolicy** |
-| 七状态机 | ✅ **7/7** | `done`/`failed`/`partially_completed`/`plan_invalidated`/`failed_postcheck`/`compensation_failed`/`rollback_failed` |
-| 决策表 | ✅ **规则表** | 契约 `word_office.decision_rules`（`_decide_tier` 读契约） |
-| **Overlay** | ✅ **接进 `_apply_overlay`** | `delete`/`tracked_change` → `modal` |
-| preflight | ⚠️ **stub** | 占位函数 |
+| **L2**（跨结构语义） | ⚠️ **部分** | `move`/`tracked_change` 已做（**段级**）；**跨结构**（表↔叙述/大纲）未做 |
+| **L3**（事务层） | ⚠️ **部分** | `tracked_change`（`w:del`/`w:ins`）已做；**dry-run/回滚**未做 |
+| **九对象** | ✅ **9/9（全用）** | `objects.py`：Intent/DocumentState/Plan/**PatchSet**/**ToolRegistry**/**CapabilityManifest**/**ConfirmationOverlay**/**IntermediateArtifact**/**RedactionPolicy** |
+| **七状态机** | ✅ **7/7** | `done`/`failed`/`partially_completed`/`plan_invalidated`/`failed_postcheck`/`compensation_failed`/`rollback_failed` |
+| **决策表** | ✅ **规则表** | 契约 `word_office.decision_rules`（`_decide_tier` 读契约） |
+| **Overlay** | ✅ **接进 `_apply_overlay`** | `delete`/`tracked_change` → `modal`（**并接 GUI 弹窗**） |
+| preflight | ⚠️ **stub** | 占位函数（Pre-check 已覆盖） |
 | 分片（`route_before_scan`） | ⚠️ **只做 `chunk`** | 按标题切块，没有路由 |
-| 事务层（L3） | ❌ | = `tracked_change`（未做） |
 
 ---
 
-## Word op 落地（**6/6**）
+## 二、Word op 落地（**6/6，全 run 级**）
 
 | op_type | 状态 | 说明 |
 |---|---|---|
 | `inspect`（读） | ✅ | 结构检查 |
 | `replace` | ✅ | run 级 + 跨 run 段落级 |
-| `insert` | ✅ | **标题锚点 → 段后插新段；非标题锚点 → 内联插文字**（见下"双行为"） |
+| `insert` | ✅ | **标题锚点 → 段前/后插新段；非标题锚点 → 内联插文字**（见下"双行为"） |
 | `delete` | ✅ | **只删目标文字**（run 级，保留前后）；**危险 → 确认** |
 | `format` | ✅ | **run 级**：粗体/斜体/**字号**/**字体**（跨 run 也支持） |
 | `move` | ✅ | **段级移动**（同段/找不到拒绝） |
@@ -41,43 +44,46 @@
 | **标题**（`Heading*` / `Title`） | **段后插新段**（段级） | 标题后面**应该是新段落**（章节/条目） |
 | **非标题**（正文/表格/列表项） | **内联插文字**（run 级） | 正文里**"在 X 后面"** → 通常**接在同一段** |
 
-**如何判定**：看**锚点所在段落**的 `style.name`——`Heading*`/`Title` → 段级；否则 → 内联。
-**代价**：**同一句 prompt**（"在 X 后面插入 Y"）**在两种段落上行为不同**——**这是有意的**，不是 bug。
+**判定**：看**锚点段落**的 `style.name`——`Heading*`/`Title` → 段级；否则 → 内联。
+**代价**：**同一句 prompt 在两种段落上行为不同**——**有意，不是 bug**。
 
 ---
 
-**6/6 已做**；已知弊端见 `docs/optimizations.md`。
-
----
-
-## 规格 v1 / v2 / v3 对照
-
-| 版本 | 规格要求 | 本项目 |
-|---|---|---|
-| **v1** | L0 + L1 + 方案卡片 + 轻量确认 + 审计 | ✅ **已完成** |
-| **v2** | L2（复合锚点 + 对称性校验 + 质量闭环） | ❌ 未开始 |
-| **v3** | L3（PatchSet + dry-run + 回滚 + 事务层） | ❌ 未开始 |
-| **v4** | 企业级（五角色 / 双人确认） | ❌ 不做 |
-
----
-
-## 已落地清单（可验收）
+## 三、已落地清单（可验收）
 
 | 模块 | 文件 | 测试 |
 |---|---|---|
 | 结构扫描 + 三态谓词 + 指纹 | `pipeline/word_office/state.py` | `test_word_office.py` |
-| Pre-check（门 + 预算） | `pipeline/word_office/gate.py` | 同上 |
-| L0 结构检查 + 确定性替换 | `pipeline/word_office/module.py` | 同上 |
-| L1 AI 建议 + 校验 | `pipeline/word_office/ai.py` / `module.py` | 同上 |
-| 证据（gzip） | `pipeline/word_office/evidence.py` | 同上 |
-| 记忆（表/检索） | `pipeline/word_office/memory.py` | `test_word_memory.py` |
-| 即时记忆 | `pipeline/word_office/session.py` | 同上 |
+| Pre-check（门 + 预算 + **能力门**） | `pipeline/word_office/gate.py` | 同上 |
+| 统一返回 + **七状态机** | `pipeline/word_office/module.py` | 同上 |
+| 6 种 op（run 级） | `pipeline/word_office/module.py` | 同上 |
+| **九对象** | `pipeline/word_office/objects.py` | 同上 |
+| AI 建议（L1） | `pipeline/word_office/ai.py` | 同上 |
+| 证据（gzip + **脱敏**） | `pipeline/word_office/evidence.py` | 同上 |
+| 记忆（表/术语/锚点/生命周期） | `pipeline/word_office/memory.py` | `test_word_memory.py` / `test_word_term.py` |
+| 即时记忆 | `pipeline/word_office/session.py` | `test_word_memory.py` |
 | 任务链（线性） | `pipeline/word_office/chain.py` | `test_word_chain.py` |
 | E 分块 + 多文件 | `pipeline/word_office/chunk.py` / `batch.py` | `test_word_stage6.py` |
+| **GUI 确认弹窗** | `ui/main_window.py` + `engine/dispatcher.py` | —（人工验证） |
 
 ---
 
-## 结论
+## 四、没做（**诚实**）
 
-**规格是 v1–v3 的完整设计；本项目实现到 v1。**
-**v2/v3 未开始，不是"缺失"，是"未排期"**——下一步应明确：**继续 L2，还是冻结在 v1**。
+| 项 | 说明 |
+|---|---|
+| **跨结构编辑**（表↔叙述/大纲） | 规格 L2 的「跨结构」部分 |
+| **dry-run / 回滚** | 规格 L3 的「事务层」部分（现在只有**写前备份**） |
+| **preflight** | 仍是 stub（Pre-check 已覆盖） |
+| **分片路由**（`route_before_scan`） | 只有 `chunk` |
+| **`format` 颜色** | 未做 |
+| **`move` run 级** | 有意保留段级 |
+| **UI 自动化测试** | 只人工验证"能启动 + 确认弹窗" |
+
+---
+
+## 五、结论
+
+> **Word 模块 = 规格的"可写回部分"已落地**：
+> **op 6/6（run 级）、九对象 9/9、七状态机 7/7、决策表规则化、记忆/召回、GUI 确认**。
+> **没做的是"跨结构/事务层/preflight/分片路由"**——**规格自己也说"后置"**。
