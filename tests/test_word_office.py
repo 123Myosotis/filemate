@@ -284,3 +284,51 @@ def test_delete_preserves_format():
     assert texts["，"].bold is True
     assert texts["，"].font.size == Pt(14)
     assert texts["乙方是B型机。"].italic is True
+
+
+def test_insert_inline():
+    """insert 在非标题段落里是**内联**（不新增段落）。"""
+    import config
+    import shutil
+    from docx import Document
+    from pipeline.word_office import WordModule
+
+    base = BASE / "ins"
+    shutil.rmtree(base, ignore_errors=True)
+    base.mkdir(parents=True, exist_ok=True)
+    p = base / "i.docx"
+    d = Document()
+    d.add_paragraph("甲方是A型机，乙方是B型机。")
+    d.save(str(p))
+    config.get_api_key = lambda: "k"
+    r = WordModule.handle({"user_input": "在 甲方是A型机 后面插入（已确认）",
+                           "selected_files": [str(p)]})
+    assert r["status"] == "done"
+    d2 = Document(str(p))
+    assert len(d2.paragraphs) == 1
+    assert "（已确认）" in d2.paragraphs[0].text
+
+
+def test_format_cross_run():
+    """format 跨 run：目标文字被拆在两个 run 里也能加粗。"""
+    import config
+    import shutil
+    from docx import Document
+    from pipeline.word_office import WordModule
+
+    base = BASE / "fmtrun"
+    shutil.rmtree(base, ignore_errors=True)
+    base.mkdir(parents=True, exist_ok=True)
+    p = base / "f.docx"
+    d = Document()
+    para = d.add_paragraph()
+    para.add_run("甲方是")
+    para.add_run("A型机，乙方是B型机。")
+    d.save(str(p))
+    config.get_api_key = lambda: "k"
+    r = WordModule.handle({"user_input": "把 A型机 加粗",
+                           "selected_files": [str(p)]})
+    assert r["status"] == "done"
+    d2 = Document(str(p))
+    bolded = "".join(run.text for run in d2.paragraphs[0].runs if run.bold)
+    assert "A型机" in bolded

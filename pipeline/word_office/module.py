@@ -505,7 +505,13 @@ def _execute(target: Path, state: dict, preds: dict, plan: dict) -> dict:
 
 
 def _exec_insert(target: Path, op: dict) -> dict:
-    """insert：找到含锚点的段落，在其**后**插入新段落。"""
+    """insert：找到含锚点的**段落**。
+
+    - **锚点是标题**（Heading/Title）→ 段后**插新段**（段级）。
+    - **否则** → 锚点文字**后**插**内联文字**（run 级，保留锚点格式）。
+    """
+    from docx.oxml.ns import qn
+
     anchor = str(op.get("anchor") or "").strip()
     content = str(op.get("content") or "").strip()
     if not anchor or not content:
@@ -513,22 +519,32 @@ def _exec_insert(target: Path, op: dict) -> dict:
     backup = target.with_suffix(target.suffix + ".bak")
     shutil.copy2(target, backup)
     doc = Document(str(target))
-    n = 0
+    n_para = 0
+    n_text = 0
     for p in _iter_paragraphs(doc):
-        if anchor in p.text:
+        if anchor not in p.text:
+            continue
+        style = p.style.name if p.style is not None else ""
+        if style.startswith("Heading") or style == "Title":
             new_p = doc.add_paragraph(content)
             try:
-                new_p.style = p.style   # 继承锚点样式（格式一致）
+                new_p.style = p.style
             except Exception:  # noqa: BLE001
                 pass
             p._p.addnext(new_p._p)
-            n += 1
-    if n == 0:
+            n_para += 1
+            continue
+        for mid in _split_runs_at(p, anchor):
+            rpr = mid.find(qn("w:rPr"))
+            mid.addnext(_new_run(content, rpr))
+            n_text += 1
+    if n_para == 0 and n_text == 0:
         return _fail("not_found", "文档里没找到锚点「%s」。" % anchor)
+    msg = ("✅ 在「%s」后插入 %d 段（写前备份：%s）。" % (anchor, n_para, backup.name)
+           if n_para else
+           "✅ 在「%s」后插入 %d 处文字（写前备份：%s）。" % (anchor, n_text, backup.name))
     doc.save(str(target))
-    return {"status": "done", "reason": "insert",
-            "message": "✅ 在「%s」后插入 %d 段（写前备份：%s）。"
-                       % (anchor, n, backup.name),
+    return {"status": "done", "reason": "insert", "message": msg,
             "plan_ref": None, "audit_ref": None, "user_actions": []}
 
 
