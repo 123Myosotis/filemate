@@ -332,12 +332,12 @@ class WordModule:
                 result.setdefault("memory", related)
         else:
             result = _execute(target, state, preds, plan)
-        # PatchSet：这次改了哪些 + 备份 + 生效数
+        # PatchSet：这次改了哪些 + 备份 + 生效数（**真实 applied**）
         try:
             from .objects import PatchSet
             ps = PatchSet(ops=list(plan.get("operations") or []),
                           backup_path=str(target) + ".bak",
-                          applied=1 if result.get("status") == "done" else 0)
+                          applied=int(result.get("applied") or 0))
             result["patch_set"] = {"ops": ps.ops, "backup": ps.backup_path,
                                    "applied": ps.applied}
         except Exception:  # noqa: BLE001
@@ -559,6 +559,7 @@ def _execute(target: Path, state: dict, preds: dict, plan: dict) -> dict:
     return {"status": "done", "reason": "find_replace",
             "message": "✅ 已替换 %d 处「%s」→「%s」%s（写前备份：%s）。"
                        % (n_run + n_para, find, repl, note, backup.name),
+            "applied": n_run + n_para,
             "plan_ref": None, "audit_ref": None, "user_actions": []}
 
 
@@ -603,6 +604,7 @@ def _exec_insert(target: Path, op: dict) -> dict:
            "✅ 在「%s」后插入 %d 处文字（写前备份：%s）。" % (anchor, n_text, backup.name))
     doc.save(str(target))
     return {"status": "done", "reason": "insert", "message": msg,
+            "applied": n_para + n_text,
             "plan_ref": None, "audit_ref": None, "user_actions": []}
 
 
@@ -698,6 +700,7 @@ def _exec_delete(target: Path, op: dict) -> dict:
     return {"status": "done", "reason": "delete",
             "message": "✅ 删除 %d 处「%s」（只删文字，不删段；写前备份：%s）。"
                        % (n, find, backup.name),
+            "applied": n,
             "plan_ref": None, "audit_ref": None, "user_actions": []}
 
 
@@ -746,6 +749,7 @@ def _exec_format(target: Path, op: dict) -> dict:
     return {"status": "done", "reason": "format",
             "message": "✅ 已把「%s」的 %d 个文本块设为%s（写前备份：%s）。"
                        % (find, n, label, backup.name),
+            "applied": n,
             "plan_ref": None, "audit_ref": None, "user_actions": []}
 
 
@@ -781,6 +785,7 @@ def _exec_move(target: Path, op: dict) -> dict:
     return {"status": "done", "reason": "move",
             "message": "✅ 已把含「%s」的段落移到「%s」%s（写前备份：%s）。"
                        % (src, dst, "前面" if before else "后面", backup.name),
+            "applied": 1,
             "plan_ref": None, "audit_ref": None, "user_actions": []}
 
 
@@ -843,4 +848,5 @@ def _exec_tracked_change(target: Path, op: dict) -> dict:
     return {"status": "done", "reason": "tracked_change",
             "message": "✅ 已以**修订**方式改 %d 段（原文保留在删除痕迹里；写前备份：%s）。"
                        % (n, backup.name),
+            "applied": n,
             "plan_ref": None, "audit_ref": None, "user_actions": []}

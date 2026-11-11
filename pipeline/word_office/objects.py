@@ -80,6 +80,10 @@ class IntermediateArtifact:
     ref: str = ""
     payload: dict = field(default_factory=dict)
 
+    def __str__(self) -> str:
+        """**向后兼容**：老代码把 `_portrait(...)` 当 str 用，`str(art)` 返回正文。"""
+        return str((self.payload or {}).get("text") or "")
+
 
 @dataclass
 class RedactionPolicy:

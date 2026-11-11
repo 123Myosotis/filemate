@@ -349,7 +349,7 @@ def test_patch_set_in_result(docx, monkeypatch):
                            "selected_files": [str(docx)]})
     assert r["status"] == "done"
     assert "patch_set" in r
-    assert r["patch_set"]["applied"] == 1
+    assert r["patch_set"]["applied"] >= 1
 
 
 def test_overlay_dangerous(docx, monkeypatch):

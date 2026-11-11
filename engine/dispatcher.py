@@ -38,7 +38,7 @@ class IntentDispatcher:
     def dispatch(self, user_input: str, target_dir, progress=None,
                  control=None, channel_id=None, resume=False,
                  file_paths=None, ask_history=None,
-                 seed_binding_payload=None) -> dict:
+                 seed_binding_payload=None, confirmed: bool = False) -> dict:
         self._progress = progress
         self._control = control
         target_dir = Path(target_dir)
@@ -87,7 +87,8 @@ class IntentDispatcher:
         if tool == "word_office":
             if progress:
                 progress("正在处理 Word 文档…")
-            return self._run_word_office(user_input, target_dir, selected)
+            return self._run_word_office(user_input, target_dir, selected,
+                                         confirmed=confirmed)
 
         # 整理/统计/导出表格类指令：禁止提前落成闲聊，先锁目录再强制 content 动作
         wants_table = self._wants_table_synthesize(
@@ -204,7 +205,8 @@ class IntentDispatcher:
             pass
         return found
 
-    def _run_word_office(self, user_input: str, target_dir: Path, selected: list) -> dict:
+    def _run_word_office(self, user_input: str, target_dir: Path, selected: list,
+                         confirmed: bool = False) -> dict:
         """Word 编辑业务线：唯一入口 WordModule.handle()。执行层独立，不注册 capabilities。"""
         from pipeline.word_office import WordModule
 
@@ -212,12 +214,16 @@ class IntentDispatcher:
             "user_input": user_input,
             "target_dir": str(target_dir),
             "selected_files": list(selected or []),
+            "confirmed": bool(confirmed),
         }
         result = WordModule.handle(request) or {}
         return {
             "handler": "WordOffice",
             "message": str(result.get("message") or ""),
             "operations": list(result.get("user_actions") or []),
+            "status": str(result.get("status") or ""),
+            "reason": str(result.get("reason") or ""),
+            "patch_set": result.get("patch_set") or {},
         }
 
     def _run_table_query_tool(

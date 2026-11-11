@@ -37,7 +37,7 @@ class _DispatchWorker(QThread):
 
     def __init__(self, dispatcher, text, target, control=None,
                  channel_id=None, resume=False, file_paths=None,
-                 ask_history=None):
+                 ask_history=None, confirmed=False):
         super().__init__()
         self._dispatcher = dispatcher
         self._text = text
@@ -47,6 +47,7 @@ class _DispatchWorker(QThread):
         self._resume = resume
         self._file_paths = list(file_paths or [])
         self._ask_history = list(ask_history or []) if ask_history else None
+        self._confirmed = bool(confirmed)
 
     def run(self):
         try:
@@ -55,7 +56,8 @@ class _DispatchWorker(QThread):
                 control=self._control, channel_id=self._channel_id,
                 resume=self._resume,
                 file_paths=self._file_paths or None,
-                ask_history=self._ask_history)
+                ask_history=self._ask_history,
+                confirmed=self._confirmed)
             self.finished_result.emit(result)
         except Exception as e:
             self.failed.emit(str(e))
@@ -523,7 +525,7 @@ class MainWindow(QMainWindow):
         self.on_send(chat_display, input_box, send_btn, resume_btn, resume=True)
 
     def on_send(self, chat_display, input_box, send_btn=None, resume_btn=None,
-                resume: bool = False):
+                resume: bool = False, confirmed: bool = False):
         """处理发送：交 AI 代理；dispatch 在后台线程跑，避免前端卡死。"""
         text = input_box.text().strip()
         if not text and not (resume and self._last_task_text):
@@ -619,7 +621,7 @@ class MainWindow(QMainWindow):
             self.dispatcher, text, target, control=control,
             channel_id=channel_id, resume=resume,
             file_paths=selected_paths,
-            ask_history=ask_history)
+            ask_history=ask_history, confirmed=confirmed)
         self._worker = worker
 
         def on_progress(msg):
@@ -688,6 +690,19 @@ class MainWindow(QMainWindow):
                 self._bind_export_button(tab, export_path)
                 if export_path:
                     self.log("跨表查询结果已导出: %s" % export_path)
+            elif tool == "word_office" and status == "needs_confirmation":
+                # ConfirmationOverlay：危险操作（delete/tracked_change）→ 弹窗确认
+                from PyQt6.QtWidgets import QMessageBox as _QMB
+                reply = _QMB.question(
+                    self, "确认执行",
+                    str(result.get("message") or "这是危险操作，确认执行？"),
+                    _QMB.StandardButton.Yes | _QMB.StandardButton.No,
+                )
+                if reply == _QMB.StandardButton.Yes:
+                    self.on_send(chat_display, input_box, send_btn, resume_btn,
+                                 confirmed=True)
+                else:
+                    reply_ai("已取消。")
             elif tool == "table_query" and status in ("failed", "error", "cancelled"):
                 err = str(result.get("error") or result.get("message") or status)
                 reply_ai(
