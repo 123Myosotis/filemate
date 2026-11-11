@@ -508,3 +508,30 @@ def test_independent_backup():
     root = Path(__file__).resolve().parents[1] / "storage" / "backups" / "word"
     assert root.exists()
     assert list(root.glob("*_b.docx")), "独立备份没生成"
+
+
+def test_table_to_text():
+    """跨结构（表→叙述）：表格转成段落，表格消失。"""
+    import config
+    import shutil
+    from docx import Document
+    from pipeline.word_office import WordModule
+
+    config.get_api_key = lambda: "k"
+    base = BASE / "t2t"
+    shutil.rmtree(base, ignore_errors=True)
+    base.mkdir(parents=True, exist_ok=True)
+    p = base / "t.docx"
+    d = Document()
+    d.add_paragraph("前文")
+    t = d.add_table(rows=2, cols=2)
+    t.cell(0, 0).text = "名称"
+    t.cell(0, 1).text = "数量"
+    t.cell(1, 0).text = "A型机"
+    t.cell(1, 1).text = "3"
+    d.save(str(p))
+    r = WordModule.handle({"user_input": "把 设备表 表格转成文字",
+                           "selected_files": [str(p)]})
+    assert r["status"] == "done"
+    assert r["reason"] == "table_to_text"
+    assert len(Document(str(p)).tables) == 0

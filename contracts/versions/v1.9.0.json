@@ -23,7 +23,8 @@
       "format",
       "move",
       "tracked_change",
-      "outline"
+      "outline",
+      "table_to_text"
     ],
     "decision_rules": [
       {

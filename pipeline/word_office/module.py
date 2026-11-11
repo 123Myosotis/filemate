@@ -204,6 +204,10 @@ _OUTLINE_PATTERNS = (
     re.compile(r"(?:把|将)\s*(.+?)\s*设为\s*第?\s*([一二三四五六])\s*级标题"),
     re.compile(r"(?:把|将)\s*(.+?)\s*(?:设为|改成|改为)\s*(段落|正文)"),
 )
+_TABLE_TO_TEXT_PATTERNS = (
+    re.compile(r"(?:把|将)\s*(.+?)\s*(?:表格|表)\s*(?:转成|转为|变成|改成)\s*(?:文字|正文|段落)"),
+    re.compile(r"(?:把|将)\s*表格\s*(?:转成|转为|变成)\s*(?:文字|正文)"),
+)
 
 
 def _plan_ops(text: str) -> list:
@@ -264,6 +268,11 @@ def _plan_ops(text: str) -> list:
             repl = m.group(2).strip().strip("「」\"' ")
             if find and find != repl:
                 return [{"op": "tracked_change", "find": find, "replace": repl}]
+    for pat in _TABLE_TO_TEXT_PATTERNS:
+        m = pat.search(text)
+        if m:
+            find = (m.group(1) if m.groups() else "").strip().strip("「」\"' ")
+            return [{"op": "table_to_text", "find": find}]
     for pat in _OUTLINE_PATTERNS:
         m = pat.search(text)
         if m:
@@ -852,6 +861,49 @@ def _exec_delete(target: Path, op: dict) -> dict:
     return {"status": "done", "reason": "delete",
             "message": "✅ 删除 %d 处「%s」（只删文字，不删段；写前备份：%s）。"
                        % (n, find, backup.name),
+            "applied": n,
+            "plan_ref": None, "audit_ref": None, "user_actions": []}
+
+
+def _exec_table_to_text(target: Path, op: dict) -> dict:
+    """**跨结构（表→叙述）**：把表格逐行转成段落文字（表格本身删除）。"""
+    find = str(op.get("find") or "").strip()
+    backup = target.with_suffix(target.suffix + ".bak")
+    shutil.copy2(target, backup)
+    doc = Document(str(target))
+    picked = []
+    for t in doc.tables:
+        if not find or any(find in c.text for row in t.rows for c in row.cells):
+            picked.append(t)
+            if find:
+                break
+    note = ""
+    if not picked:
+        # `find` 可能是表标题（不在格子里）→ 退化为"转全部"
+        picked = list(doc.tables)
+        note = "（没在格子里找到「%s」，已转全部表格）" % find if find else ""
+    if not picked:
+        return _fail("not_found", "没找到符合条件的表格。")
+    n = 0
+    for t in picked:
+        lines = []
+        for row in t.rows:
+            cells = [c.text.strip() for c in row.cells]
+            cells = [c for i, c in enumerate(cells) if i == 0 or c != cells[i - 1]]
+            line = "：".join([cells[0]] + cells[1:]) if len(cells) > 1 else (cells[0] if cells else "")
+            if line:
+                lines.append(line)
+        body = t._tbl.getparent()
+        for line in lines:
+            p = doc.add_paragraph(line)
+            body.addnext(p._p)
+            body = p._p
+            n += 1
+        t._tbl.getparent().remove(t._tbl)
+    doc.save(str(target))
+    return {"status": "done", "reason": "table_to_text",
+            "message": "✅ 已把 %d 个表格转成 %d 段文字%s（写前备份：%s）。"
+                       % (len(picked), n, note, backup.name),
             "applied": n,
             "plan_ref": None, "audit_ref": None, "user_actions": []}
 
