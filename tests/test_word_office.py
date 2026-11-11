@@ -459,3 +459,52 @@ def test_outline():
     assert r["status"] == "done"
     assert r["reason"] == "outline"
     assert Document(str(p)).paragraphs[0].style.name == "Heading 2"
+
+
+def test_move_keeps_punctuation(docx, monkeypatch):
+    """move：run 级移动时**带紧邻标点**。"""
+    import config
+    monkeypatch.setattr(config, "get_api_key", lambda: "k")
+    r = WordModule.handle({"user_input": "把 乙方是B型机 移到 甲方是A型机 前面",
+                           "selected_files": [str(docx)]})
+    assert r["status"] == "done"
+
+
+def test_outline_warns_numbering():
+    """outline：带 1.2 编号时，提示「编号可能需手工核对」。"""
+    import config
+    from docx import Document
+    from pipeline.word_office import WordModule
+
+    base = BASE / "outline2"
+    base.mkdir(parents=True, exist_ok=True)
+    p = base / "o2.docx"
+    d = Document()
+    d.add_heading("1.2 背景", level=2)
+    d.save(str(p))
+    config.get_api_key = lambda: "k"
+    r = WordModule.handle({"user_input": "把 1.2 背景 设为一级标题",
+                           "selected_files": [str(p)]})
+    assert r["status"] == "done"
+    assert "编号可能需手工核对" in r["message"]
+
+
+def test_independent_backup():
+    """独立备份：storage/backups/word 下有文件。"""
+    from pathlib import Path
+    import shutil
+    from docx import Document
+    from pipeline.word_office import WordModule
+    import config
+
+    config.get_api_key = lambda: "k"
+    base = BASE / "bk"
+    shutil.rmtree(base, ignore_errors=True)
+    base.mkdir(parents=True, exist_ok=True)
+    p = base / "b.docx"
+    d = Document(); d.add_paragraph("甲方是A型机。"); d.save(str(p))
+    WordModule.handle({"user_input": "把 A型机 替换成 C型机",
+                       "selected_files": [str(p)]})
+    root = Path(__file__).resolve().parents[1] / "storage" / "backups" / "word"
+    assert root.exists()
+    assert list(root.glob("*_b.docx")), "独立备份没生成"

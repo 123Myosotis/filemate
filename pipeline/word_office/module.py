@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 
 from docx import Document
+from docx.oxml.ns import qn
 
 import config
 from .state import is_clean, predicates, scan
@@ -384,6 +385,17 @@ class WordModule:
             return _finish(_fail("preflight", str(pre2.get("reason") or "")),
                            stages, warnings=warnings)
 
+        # **独立备份**：复制到 storage/backups/word/（不依赖 .bak）
+        bak2 = None
+        try:
+            from pathlib import Path as _P
+            bkroot = _P(__file__).resolve().parents[2] / "storage" / "backups" / "word"
+            bkroot.mkdir(parents=True, exist_ok=True)
+            bak2 = bkroot / ("%s_%s" % (time.strftime("%Y%m%d-%H%M%S"), work.name))
+            shutil.copy2(work, bak2)
+        except Exception:  # noqa: BLE001
+            bak2 = None
+
         if tier == "B":
             related = []
             try:
@@ -450,10 +462,13 @@ class WordModule:
         # dry-run / 回滚：**独立处理**
         if request.get("rollback"):
             bak = target.with_suffix(target.suffix + ".bak")
-            if not bak.exists():
-                return _finish(_fail("rollback_failed", "没有备份（.bak 不存在），无法回滚。"),
+            if bak.exists():
+                shutil.copy2(bak, target)
+            elif bak2 is not None and bak2.exists():
+                shutil.copy2(bak2, target)
+            else:
+                return _finish(_fail("rollback_failed", "没有备份（.bak 与独立备份都没有），无法回滚。"),
                                stages, warnings=warnings)
-            shutil.copy2(bak, target)
             result["rollback"] = True
             result["applied"] = 0
         elif request.get("dry_run"):
@@ -812,9 +827,12 @@ def _exec_outline(target: Path, op: dict) -> dict:
         return _fail("not_found", "文档里没找到「%s」。" % find)
     doc.save(str(target))
     label = ("%d 级标题" % level) if level > 0 else "正文"
+    note = ""
+    if level > 0 and re.search(r"\d+\s*[.、．]\s*\d+", find):
+        note = "（**编号可能需手工核对**）"
     return {"status": "done", "reason": "outline",
-            "message": "✅ 已把含「%s」的 %d 段设为%s（写前备份：%s）。"
-                       % (find, n, label, backup.name),
+            "message": "✅ 已把含「%s」的 %d 段设为%s%s（写前备份：%s）。"
+                       % (find, n, label, note, backup.name),
             "applied": n,
             "plan_ref": None, "audit_ref": None, "user_actions": []}
 
@@ -907,11 +925,21 @@ def _exec_move(target: Path, op: dict) -> dict:
         return _fail("not_found", "文档里没找到目标「%s」。" % dst)
     if src_el is dst_el:
         return _fail("bad_plan", "源和目标同一处，无法移动。")
+    # **带标点**：src 后紧跟的标点 run 一起移
+    tail = None
+    nxt = src_el.getnext()
+    if nxt is not None and nxt.tag == qn("w:r"):
+        txt = "".join(x.text or "" for x in nxt.findall(qn("w:t")))
+        if txt and txt[0] in "，。；！？,.;!?":
+            tail = nxt
     src_el.getparent().remove(src_el)
     if before:
         dst_el.addprevious(src_el)
     else:
         dst_el.addnext(src_el)
+    if tail is not None:
+        tail.getparent().remove(tail)
+        src_el.addnext(tail)
     doc.save(str(target))
     return {"status": "done", "reason": "move",
             "message": "✅ 已把「%s」移到「%s」%s（run 级；写前备份：%s）。"

@@ -24,3 +24,26 @@ def test_main_window_construct():
         assert w.windowTitle() or True
     finally:
         w.close()
+
+
+def test_dispatch_worker_run():
+    """交互层冒烟：`_DispatchWorker.run()` 同步跑，走通 dispatch → 结果信号。"""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PyQt6")
+    from PyQt6.QtWidgets import QApplication
+
+    app = QApplication.instance() or QApplication([])
+
+    from ui.main_window import _DispatchWorker
+
+    class FakeDispatcher:
+        def dispatch(self, text, target, **kwargs):
+            return {"handler": "WordOffice", "status": "done",
+                    "message": "ok", "confirmed": kwargs.get("confirmed")}
+
+    w = _DispatchWorker(FakeDispatcher(), "hi", ".")
+    got = {}
+    w.finished_result.connect(lambda r: got.update(r))
+    w.run()  # 同步
+    assert got.get("status") == "done"
+    assert got.get("message") == "ok"
