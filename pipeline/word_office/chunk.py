@@ -9,6 +9,21 @@ from docx import Document
 _HEADING_STYLES = ("Heading 1", "Heading 2", "Heading 3", "Title")
 
 
+def route(path: Path, threshold: int = 200) -> dict:
+    """**分片路由**：大文档（段数 > threshold）→ 建议分块；否则不分。
+
+    返回 `{should_split, reason, paragraphs}`。
+    """
+    try:
+        doc = Document(str(path))
+        n = len([p for p in doc.paragraphs if p.text.strip()])
+    except Exception:  # noqa: BLE001
+        return {"should_split": False, "reason": "unreadable", "paragraphs": 0}
+    if n > int(threshold):
+        return {"should_split": True, "reason": "large_doc", "paragraphs": n}
+    return {"should_split": False, "reason": "small_doc", "paragraphs": n}
+
+
 def split_by_heading(path: Path) -> list[dict]:
     """按 Heading 1/2/3 切块；无标题则整篇一块。"""
     doc = Document(str(path))

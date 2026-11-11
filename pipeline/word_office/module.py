@@ -285,6 +285,15 @@ class WordModule:
 
         state = scan(target)
         stages.append({"name": "scan", "status": "ok", "detail": "%d 段" % state["paragraphs"]})
+        # 分片路由：大文档 → 提示（**只提示，不强制分块**）
+        try:
+            from .chunk import route as _route
+            rt = _route(target)
+            if rt.get("should_split"):
+                stages.append({"name": "route", "status": "warn",
+                               "detail": "large_doc（%d 段）建议分块" % rt.get("paragraphs")})
+        except Exception:  # noqa: BLE001
+            pass
         # 术语自动挖掘（规则，不调 LLM）——扫完就挖，落库当"候选"
         try:
             from .memory import mine_and_save

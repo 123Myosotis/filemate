@@ -55,3 +55,17 @@ def test_batch_partial(docx):
     r = run_batch([str(docx), "不存在.docx"], "检查结构")
     assert r["status"] == "partially_completed"
     assert len(r["results"]) == 2
+
+
+def test_route_small(docx):
+    from pipeline.word_office.chunk import route
+    rt = route(docx)
+    assert rt["should_split"] is False
+    assert rt["reason"] == "small_doc"
+
+
+def test_route_large(docx):
+    from pipeline.word_office.chunk import route
+    rt = route(docx, threshold=0)
+    assert rt["should_split"] is True
+    assert rt["reason"] == "large_doc"
