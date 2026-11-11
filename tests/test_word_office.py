@@ -534,7 +534,43 @@ def test_table_to_text():
                            "selected_files": [str(p)]})
     assert r["status"] == "done"
     assert r["reason"] == "table_to_text"
-    assert len(Document(str(p)).tables) == 0
+    d2 = Document(str(p))
+    assert len(d2.tables) == 0
+    texts = [q.text for q in d2.paragraphs]
+    assert "名称：数量" in texts
+    assert "A型机：3" in texts
+
+
+def test_table_to_text_by_caption():
+    """跨结构（表→叙述）：`find` 是表标题（不在格子里）也能精确定位。"""
+    import config
+    import shutil
+    from docx import Document
+    from pipeline.word_office import WordModule
+
+    config.get_api_key = lambda: "k"
+    base = BASE / "t2t_cap"
+    shutil.rmtree(base, ignore_errors=True)
+    base.mkdir(parents=True, exist_ok=True)
+    p = base / "c.docx"
+    d = Document()
+    d.add_paragraph("设备表")
+    t = d.add_table(rows=2, cols=2)
+    t.cell(0, 0).text = "名称"
+    t.cell(0, 1).text = "数量"
+    t.cell(1, 0).text = "A型机"
+    t.cell(1, 1).text = "3"
+    d.add_paragraph("后文")
+    d.save(str(p))
+    r = WordModule.handle({"user_input": "把 设备表 表格转成文字",
+                           "selected_files": [str(p)]})
+    assert r["status"] == "done"
+    assert "按表标题" in r["message"]
+    d2 = Document(str(p))
+    assert len(d2.tables) == 0
+    texts = [q.text for q in d2.paragraphs]
+    assert "名称：数量" in texts
+    assert "后文" in texts
 
 
 def test_text_to_table():
@@ -563,8 +599,39 @@ def test_text_to_table():
     assert [c.text for c in tables[0].rows[0].cells] == ["名称", "A型机"]
 
 
+def test_text_to_table_skips_blank_and_equals():
+    """跨结构（叙述→表）：跳过空行、支持 `=` 分隔。"""
+    import config
+    import shutil
+    from docx import Document
+    from pipeline.word_office import WordModule
+
+    config.get_api_key = lambda: "k"
+    base = BASE / "t2t3"
+    shutil.rmtree(base, ignore_errors=True)
+    base.mkdir(parents=True, exist_ok=True)
+    p = base / "t3.docx"
+    d = Document()
+    d.add_paragraph("设备概况")
+    d.add_paragraph("名称=A型机")
+    d.add_paragraph("")           # 空行
+    d.add_paragraph("数量=3")
+    d.add_paragraph("（结束）")    # 非键值对 → 停止
+    d.save(str(p))
+    r = WordModule.handle({"user_input": "把 设备概况 转成表格",
+                           "selected_files": [str(p)]})
+    assert r["status"] == "done"
+    assert r["reason"] == "text_to_table"
+    tables = Document(str(p)).tables
+    assert len(tables) == 1
+    rows = [[c.text for c in row.cells] for row in tables[0].rows]
+    assert rows == [["名称", "A型机"], ["数量", "3"]]
+    # 结束标记不被吞
+    assert "（结束）" in [q.text for q in Document(str(p)).paragraphs]
+
+
 def test_table_to_outline():
-    """跨结构（表→大纲）：表格首列 → 标题。"""
+    """跨结构（表→大纲）：表格首列 → 标题，其余列 → 正文。"""
     import config
     import shutil
     from docx import Document
@@ -586,11 +653,16 @@ def test_table_to_outline():
                            "selected_files": [str(p)]})
     assert r["status"] == "done"
     assert r["reason"] == "table_to_outline"
-    assert len(Document(str(p)).tables) == 0
+    d2 = Document(str(p))
+    assert len(d2.tables) == 0
+    texts = [q.text for q in d2.paragraphs]
+    assert "一、总览" in texts
+    assert "说明" in texts      # 其余列保留为正文
+    assert "二、明细" in texts
 
 
 def test_outline_to_table():
-    """跨结构（大纲→表）：标题 → 2 列表格（标题 + 层级）。"""
+    """跨结构（大纲→表）：标题 → 2 列表格（标题 + 数字层级），标题被搬走。"""
     import config
     import shutil
     from docx import Document
@@ -610,6 +682,10 @@ def test_outline_to_table():
                            "selected_files": [str(p)]})
     assert r["status"] == "done"
     assert r["reason"] == "outline_to_table"
-    tables = Document(str(p)).tables
+    d2 = Document(str(p))
+    tables = d2.tables
     assert len(tables) == 1
-    assert [c.text for c in tables[0].rows[0].cells] == ["一、总览", "标题 1 级"]
+    assert [c.text for c in tables[0].rows[0].cells] == ["一、总览", "1"]
+    # 标题已搬走（非镜像）
+    heads = [q.text for q in d2.paragraphs if (q.style.name or "").startswith("Heading")]
+    assert heads == []

@@ -909,6 +909,7 @@ def _exec_outline_to_table(target: Path, op: dict) -> dict:
         if start < 0:
             return _fail("not_found", "文档里没找到「%s」。" % find)
     rows = []
+    heading_els = []
     for p in paras[start + 1:]:
         name = p.style.name or ""
         if name.startswith("Heading"):
@@ -917,6 +918,7 @@ def _exec_outline_to_table(target: Path, op: dict) -> dict:
             except (ValueError, IndexError):
                 level = 1
             rows.append((p.text.strip(), str(level)))
+            heading_els.append(p._p)
         elif not p.text.strip():
             continue
     if not rows:
@@ -924,20 +926,24 @@ def _exec_outline_to_table(target: Path, op: dict) -> dict:
     tbl = doc.add_table(rows=len(rows), cols=2)
     for i, (title, level) in enumerate(rows):
         tbl.cell(i, 0).text = title
-        tbl.cell(i, 1).text = "标题 %s 级" % level
+        tbl.cell(i, 1).text = level  # 数字层级（可回表 round-trip）
     anchor_el = paras[start]._p if start >= 0 else paras[0]._p
     anchor_el.addnext(tbl._tbl)
+    # 已转的标题删除（与其它"转"操作一致：**搬走，非镜像**）
+    for el in heading_els:
+        el.getparent().remove(el)
     doc.save(str(target))
     return {"status": "done", "reason": "outline_to_table",
-            "message": "✅ 已把 %d 个标题转成表格（写前备份：%s）。"
+            "message": "✅ 已把 %d 个标题转成表格（第二列为层级；写前备份：%s）。"
                        % (len(rows), backup.name),
             "applied": len(rows),
             "plan_ref": None, "audit_ref": None, "user_actions": []}
 
 
 def _exec_table_to_outline(target: Path, op: dict) -> dict:
-    """**跨结构（表→大纲）**：表格**首列**每格 → 一级标题（表格删除）。"""
+    """**跨结构（表→大纲）**：表格**首列**→`Heading level`，**其余列→正文段**；表格删除。"""
     find = str(op.get("find") or "").strip()
+    level = int(op.get("level") or 1)
     backup = target.with_suffix(target.suffix + ".bak")
     shutil.copy2(target, backup)
     doc = Document(str(target))
@@ -953,32 +959,36 @@ def _exec_table_to_outline(target: Path, op: dict) -> dict:
         return _fail("not_found", "没找到表格。")
     n = 0
     for t in picked:
-        titles = []
         for row in t.rows:
-            first = row.cells[0].text.strip() if row.cells else ""
-            if first:
-                titles.append(first)
-        body = t._tbl.getparent()
-        for title in titles:
-            p = doc.add_paragraph(title)
+            cells = [c.text.strip() for c in row.cells]
+            first = cells[0] if cells else ""
+            if not first:
+                continue
+            p = doc.add_paragraph(first)
             try:
-                p.style = doc.styles["Heading 1"]
+                p.style = doc.styles["Heading %d" % level]
             except Exception:  # noqa: BLE001
                 pass
-            body.addnext(p._p)
-            body = p._p
+            t._tbl.addprevious(p._p)
             n += 1
+            rest = cells[1:]
+            if rest:
+                bp = doc.add_paragraph("　".join(rest))
+                t._tbl.addprevious(bp._p)
         t._tbl.getparent().remove(t._tbl)
     doc.save(str(target))
     return {"status": "done", "reason": "table_to_outline",
-            "message": "✅ 已把 %d 个表格的首列转成 %d 个标题（写前备份：%s）。"
+            "message": "✅ 已把 %d 个表格的首列转成 %d 个标题（其余列→正文；写前备份：%s）。"
                        % (len(picked), n, backup.name),
             "applied": n,
             "plan_ref": None, "audit_ref": None, "user_actions": []}
 
 
 def _exec_text_to_table(target: Path, op: dict) -> dict:
-    """**跨结构（叙述→表）**：把 `find` 之后连续的 `键：值` 段落转成 2 列表格。"""
+    """**跨结构（叙述→表）**：把 `find` 之后连续的 `键:值` 段落转成 2 列表格。
+
+    支持分隔符 `：` / `:` / `=`；**跳过空行**；遇到既非空又非键值对的段落才停。
+    """
     find = str(op.get("find") or "").strip()
     if not find:
         return _fail("bad_plan", "text_to_table 缺少目标。")
@@ -999,18 +1009,19 @@ def _exec_text_to_table(target: Path, op: dict) -> dict:
     for p in paras[start + 1:]:
         t = p.text.strip()
         if not t:
-            break
-        if "：" in t:
-            k, v = t.split("：", 1)
-            rows.append((k.strip(), v.strip()))
-        elif ":" in t:
-            k, v = t.split(":", 1)
-            rows.append((k.strip(), v.strip()))
-        else:
-            break
+            continue  # 空行跳过，不中断
+        kv = None
+        for sep in ("：", ":", "="):
+            if sep in t:
+                k, v = t.split(sep, 1)
+                kv = (k.strip(), v.strip())
+                break
+        if kv is None:
+            break  # 既非空又非键值对 → 列表结束
+        rows.append(kv)
         body.remove(p._p)
     if not rows:
-        return _fail("bad_plan", "「%s」后面没有可转成表的「键：值」段落。" % find)
+        return _fail("bad_plan", "「%s」后面没有可转成表的「键:值」段落。" % find)
     tbl = doc.add_table(rows=len(rows), cols=2)
     for i, (k, v) in enumerate(rows):
         tbl.cell(i, 0).text = k
@@ -1037,10 +1048,20 @@ def _exec_table_to_text(target: Path, op: dict) -> dict:
             if find:
                 break
     note = ""
+    if not picked and find:
+        # **表标题（caption）匹配**：找表格前紧邻的段落
+        for t in doc.tables:
+            prev = t._tbl.getprevious()
+            if prev is not None and prev.tag == qn("w:p"):
+                txt = "".join(x.text or "" for x in prev.iter(qn("w:t")))
+                if find in txt:
+                    picked.append(t)
+                    break
+        if picked:
+            note = "（按表标题「%s」定位）" % find
     if not picked:
-        # `find` 可能是表标题（不在格子里）→ 退化为"转全部"
         picked = list(doc.tables)
-        note = "（没在格子里找到「%s」，已转全部表格）" % find if find else ""
+        note = ("（没在格子里找到「%s」，已转全部表格）" % find) if find else ""
     if not picked:
         return _fail("not_found", "没找到符合条件的表格。")
     n = 0
@@ -1052,11 +1073,10 @@ def _exec_table_to_text(target: Path, op: dict) -> dict:
             line = "：".join([cells[0]] + cells[1:]) if len(cells) > 1 else (cells[0] if cells else "")
             if line:
                 lines.append(line)
-        body = t._tbl.getparent()
+        # 段落插到表格原位置（`addprevious`，顺序不反），再删表
         for line in lines:
             p = doc.add_paragraph(line)
-            body.addnext(p._p)
-            body = p._p
+            t._tbl.addprevious(p._p)
             n += 1
         t._tbl.getparent().remove(t._tbl)
     doc.save(str(target))
