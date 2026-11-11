@@ -341,6 +341,25 @@ class WordModule:
                 "operations": [{"op": "l1"}] if tier == "B" else _plan_ops(text)}
         plan = _apply_overlay(plan)
 
+        # 置信度：**fallback 到 inspect 且用户没说"检查/结构" → 低置信**
+        ops = plan.get("operations") or []
+        low = False
+        for o in ops:
+            if o.get("op") == "inspect" and not any(
+                    k in text for k in ("检查", "结构", "看看", "看看结构")):
+                o["confidence"] = 0.3
+                low = True
+            else:
+                o.setdefault("confidence", 0.9)
+        if low and not request.get("confirmed"):
+            return _finish({
+                "status": "needs_confirmation",
+                "reason": "low_confidence",
+                "message": "我没太确定你要做什么（是「检查结构」还是别的？）。请确认后再执行。",
+                "user_actions": [{"label": "确认按「结构检查」执行", "action": "confirm"}],
+                "plan_ref": None, "audit_ref": None,
+            }, stages)
+
         # 危险操作（delete）走确认（架构 §3：低置信/危险操作要弹窗）
         if any(o.get("op") == "delete" for o in plan["operations"]):
             if not request.get("confirmed"):
@@ -899,7 +918,6 @@ def _exec_move(target: Path, op: dict) -> dict:
                        % (src, dst, "前面" if before else "后面", backup.name),
             "applied": 1,
             "plan_ref": None, "audit_ref": None, "user_actions": []}
-
 
 def _exec_tracked_change(target: Path, op: dict) -> dict:
     """tracked_change：**run 级**修订——只把 `find` 那段包进 `w:del`/`w:ins`，前后文保留。"""
