@@ -412,3 +412,28 @@ def test_format_color(docx, monkeypatch):
                            "selected_files": [str(docx)]})
     assert r["status"] == "done"
     assert r["reason"] == "format"
+
+
+def test_dry_run(docx, monkeypatch):
+    """dry-run：执行后恢复备份，**文件不变**。"""
+    import config
+    monkeypatch.setattr(config, "get_api_key", lambda: "k")
+    before = docx.read_bytes()
+    r = WordModule.handle({"user_input": "把 A型机 替换成 C型机",
+                           "selected_files": [str(docx)], "dry_run": True})
+    assert r["status"] == "done"
+    assert r.get("dry_run") is True
+    assert r.get("applied") == 0
+    assert docx.read_bytes() == before
+
+
+def test_rollback(docx, monkeypatch):
+    """rollback：执行后恢复备份。"""
+    import config
+    monkeypatch.setattr(config, "get_api_key", lambda: "k")
+    before = docx.read_bytes()
+    r = WordModule.handle({"user_input": "把 A型机 替换成 C型机",
+                           "selected_files": [str(docx)], "rollback": True})
+    assert r["status"] == "done"
+    assert r.get("rollback") is True
+    assert docx.read_bytes() == before

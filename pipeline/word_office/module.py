@@ -404,6 +404,13 @@ class WordModule:
                       "user_input": text, "status": result.get("status")})
         except Exception:  # noqa: BLE001
             pass
+        # dry-run / 回滚：执行后从 .bak 恢复
+        if request.get("dry_run") or request.get("rollback"):
+            bak = target.with_suffix(target.suffix + ".bak")
+            if bak.exists():
+                shutil.copy2(bak, target)
+                result["dry_run" if request.get("dry_run") else "rollback"] = True
+                result["applied"] = 0
         return _finish(result, stages, warnings=warnings)
 
 
