@@ -24,6 +24,20 @@
       "move",
       "tracked_change"
     ],
+    "decision_rules": [
+      {
+        "id": "R_B_AI_HINT",
+        "tier": "B",
+        "when": {
+          "any_keyword": ["校对", "错别字", "润色", "改写", "摘要", "总结", "标记", "术语", "建议"]
+        }
+      },
+      {
+        "id": "R_A_DEFAULT",
+        "tier": "A",
+        "when": {"default": true}
+      }
+    ],
     "budget": {
       "A": 0,
       "B": 2000,

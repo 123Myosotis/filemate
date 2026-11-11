@@ -25,19 +25,38 @@ _TIER_HINTS = ("校对", "错别字", "润色", "改写", "摘要", "总结", "�
 
 
 def _decide_tier(text: str, state: dict, preds: dict) -> str:
-    """决策表占位：有 AI 类词 → B；否则 A（确定性）。"""
-    if any(h in str(text or "") for h in _TIER_HINTS):
-        return "B"
+    """**决策表**（读契约 `word_office.decision_rules`）：按规则匹配 → tier。"""
+    try:
+        from pipeline.synth_contract.registry import load_contract
+        rules = (load_contract().data.get("word_office") or {}).get("decision_rules") or []
+    except Exception:  # noqa: BLE001
+        rules = []
+    if not rules:
+        # 兜底：老行为
+        return "B" if any(h in str(text or "") for h in _TIER_HINTS) else "A"
+    for r in rules:
+        when = r.get("when") or {}
+        if when.get("default"):
+            return str(r.get("tier") or "A")
+        kws = when.get("any_keyword") or []
+        if kws and any(k in str(text or "") for k in kws):
+            return str(r.get("tier") or "A")
     return "A"
 
 
 def _finish(result: dict, stages: list = None, tokens: dict = None,
             warnings: list = None) -> dict:
-    """统一返回结构：status / stages / fail_locus / tokens / warnings。"""
+    """统一返回结构：status / stages / fail_locus / tokens / warnings。
+
+    **七状态机**：`done` / `failed` / `partially_completed` /
+    `plan_invalidated` / `failed_postcheck` / `compensation_failed` / `rollback_failed`。
+    """
     result.setdefault("stages", stages or [])
     result.setdefault("fail_locus", "")
     result.setdefault("tokens", tokens or {})
     result.setdefault("warnings", warnings or [])
+    if result.get("status") not in _STATUS:
+        result["status"] = "failed"
     return result
 
 
@@ -444,8 +463,27 @@ def _exec_l1(target: Path, state: dict, preds: dict, user_input: str,
             "plan_ref": None, "audit_ref": None, "user_actions": []}
 
 
+_STATUS = (
+    "done", "failed", "partially_completed",
+    "plan_invalidated", "failed_postcheck",
+    "compensation_failed", "rollback_failed",
+    "needs_confirmation",   # 危险操作/低置信，等用户确认
+)
+
+_REASON_STATUS = {
+    "pre_check": "plan_invalidated",
+    "plan_invalidated": "plan_invalidated",
+    "verify_failed": "failed_postcheck",
+    "failed_postcheck": "failed_postcheck",
+    "compensation_failed": "compensation_failed",
+    "rollback_failed": "rollback_failed",
+}
+
+
 def _fail(reason: str, message: str) -> dict:
-    return {"status": "failed", "reason": reason, "message": message,
+    """失败：**按 reason 映射到七状态机**（默认 `failed`）。"""
+    status = _REASON_STATUS.get(reason, "failed")
+    return {"status": status, "reason": reason, "message": message,
             "plan_ref": None, "audit_ref": None, "user_actions": []}
 
 
