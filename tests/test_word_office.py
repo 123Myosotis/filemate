@@ -332,3 +332,37 @@ def test_format_cross_run():
     d2 = Document(str(p))
     bolded = "".join(run.text for run in d2.paragraphs[0].runs if run.bold)
     assert "A型机" in bolded
+
+
+def test_tool_registry_dispatch(docx, monkeypatch):
+    """ToolRegistry：dispatch 表能把 op 转到执行器。"""
+    from pipeline.word_office.objects import ToolRegistry
+    assert ToolRegistry().tools["insert"] == "_exec_insert"
+    assert ToolRegistry().tools["tracked_change"] == "_exec_tracked_change"
+
+
+def test_patch_set_in_result(docx, monkeypatch):
+    """PatchSet：执行结果带 patch_set（ops/backup/applied）。"""
+    import config
+    monkeypatch.setattr(config, "get_api_key", lambda: "k")
+    r = WordModule.handle({"user_input": "把 A型机 替换成 C型机",
+                           "selected_files": [str(docx)]})
+    assert r["status"] == "done"
+    assert "patch_set" in r
+    assert r["patch_set"]["applied"] == 1
+
+
+def test_overlay_dangerous(docx, monkeypatch):
+    """ConfirmationOverlay：delete → modal（needs_confirmation）。"""
+    import config
+    monkeypatch.setattr(config, "get_api_key", lambda: "k")
+    r = WordModule.handle({"user_input": "删除 甲方是A型机",
+                           "selected_files": [str(docx)]})
+    assert r["status"] == "needs_confirmation"
+
+
+def test_capability_manifest():
+    """CapabilityManifest：能力清单包含 7 个 op。"""
+    from pipeline.word_office.objects import CapabilityManifest
+    ops = set(CapabilityManifest().op_types)
+    assert {"replace", "insert", "delete", "format", "move", "tracked_change"} <= ops

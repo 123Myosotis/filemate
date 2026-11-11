@@ -55,6 +55,18 @@ def pre_check(plan: dict) -> dict:
     if len(ops) > 20:
         errors.append("ops_too_many:%d" % len(ops))
 
+    # CapabilityManifest：能力清单也是"门"
+    try:
+        from .objects import CapabilityManifest
+        known = set(CapabilityManifest().op_types) | {"find_replace", "l1"}
+    except Exception:  # noqa: BLE001
+        known = set()
+    if known:
+        for op in ops:
+            name = str(op.get("op") or "")
+            if name and name not in known:
+                errors.append("op_not_capable:%s" % name)
+
     wl = ops_whitelist()
     for op in ops:
         name = str(op.get("op") or "")

@@ -61,7 +61,16 @@ def _finish(result: dict, stages: list = None, tokens: dict = None,
 
 
 def _apply_overlay(plan: dict) -> dict:
-    """ConfirmationOverlay 占位：现在不改 requires_confirmation。"""
+    """ConfirmationOverlay：危险 op → `modal`；写进 `plan["confirmation"]`。"""
+    from .objects import ConfirmationOverlay
+
+    ops = [str(o.get("op") or "") for o in (plan.get("operations") or [])]
+    if "delete" in ops or "tracked_change" in ops:
+        plan["confirmation"] = ConfirmationOverlay(
+            level="modal", reason="dangerous_op",
+            user_actions=[{"label": "确认执行", "action": "confirm"}]).__dict__
+    else:
+        plan["confirmation"] = ConfirmationOverlay(level="silent").__dict__
     return plan
 
 
@@ -323,6 +332,16 @@ class WordModule:
                 result.setdefault("memory", related)
         else:
             result = _execute(target, state, preds, plan)
+        # PatchSet：这次改了哪些 + 备份 + 生效数
+        try:
+            from .objects import PatchSet
+            ps = PatchSet(ops=list(plan.get("operations") or []),
+                          backup_path=str(target) + ".bak",
+                          applied=1 if result.get("status") == "done" else 0)
+            result["patch_set"] = {"ops": ps.ops, "backup": ps.backup_path,
+                                   "applied": ps.applied}
+        except Exception:  # noqa: BLE001
+            pass
         _audit({"path": str(target), "tier": tier, "ops": len(plan["operations"]),
                 "status": result.get("status")})
         try:
@@ -505,16 +524,14 @@ def _execute(target: Path, state: dict, preds: dict, plan: dict) -> dict:
         return {"status": "done", "reason": "inspect",
                 "message": _inspect_msg(state, preds),
                 "plan_ref": None, "audit_ref": None, "user_actions": []}
-    if op["op"] == "insert":
-        return _exec_insert(target, op)
-    if op["op"] == "delete":
-        return _exec_delete(target, op)
-    if op["op"] == "format":
-        return _exec_format(target, op)
-    if op["op"] == "move":
-        return _exec_move(target, op)
-    if op["op"] == "tracked_change":
-        return _exec_tracked_change(target, op)
+    # ToolRegistry 分派（新增 op 只改 objects.ToolRegistry，不改这里）
+    from .objects import ToolRegistry
+    import sys as _sys
+    name = ToolRegistry().tools.get(str(op["op"]))
+    if name and name != "_execute":
+        fn = getattr(_sys.modules[__name__], name, None)
+        if fn is not None:
+            return fn(target, op)
 
     find, repl = op.get("find", ""), op.get("replace", "")
     before = _count_all(target, find)
