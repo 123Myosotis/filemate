@@ -298,7 +298,16 @@ class WordModule:
         if not target.is_file():
             return _finish(_fail("not_found", "选中的文件不存在：%s" % target.name))
 
-        state = scan(target)
+        # **真 dry-run**：在临时副本上跑，原文件一个字节都不碰
+        dry = bool(request.get("dry_run"))
+        work = target
+        tmp = None
+        if dry:
+            tmp = target.with_suffix(".dryrun" + target.suffix)
+            shutil.copy2(target, tmp)
+            work = tmp
+
+        state = scan(work)
         stages.append({"name": "scan", "status": "ok", "detail": "%d 段" % state["paragraphs"]})
         # 分片路由：大文档 → 提示（**只提示，不强制分块**）
         try:
@@ -367,11 +376,11 @@ class WordModule:
                 related.extend(recall(text))
             except Exception:  # noqa: BLE001
                 pass
-            result = _exec_l1(target, state, preds, text, related=related)
+            result = _exec_l1(work, state, preds, text, related=related)
             if related:
                 result.setdefault("memory", related)
         else:
-            result = _execute(target, state, preds, plan)
+            result = _execute(work, state, preds, plan)
         # PatchSet：这次改了哪些 + 备份 + 生效数（**真实 applied**）
         try:
             from .objects import PatchSet
@@ -419,13 +428,24 @@ class WordModule:
                       "user_input": text, "status": result.get("status")})
         except Exception:  # noqa: BLE001
             pass
-        # dry-run / 回滚：执行后从 .bak 恢复
-        if request.get("dry_run") or request.get("rollback"):
+        # dry-run / 回滚：**独立处理**
+        if request.get("rollback"):
             bak = target.with_suffix(target.suffix + ".bak")
-            if bak.exists():
-                shutil.copy2(bak, target)
-                result["dry_run" if request.get("dry_run") else "rollback"] = True
-                result["applied"] = 0
+            if not bak.exists():
+                return _finish(_fail("rollback_failed", "没有备份（.bak 不存在），无法回滚。"),
+                               stages, warnings=warnings)
+            shutil.copy2(bak, target)
+            result["rollback"] = True
+            result["applied"] = 0
+        elif request.get("dry_run"):
+            result["dry_run"] = True
+            result["applied"] = 0
+        # 真 dry-run：删临时副本
+        if tmp is not None:
+            try:
+                tmp.unlink(missing_ok=True)
+            except Exception:  # noqa: BLE001
+                pass
         return _finish(result, stages, warnings=warnings)
 
 
@@ -843,7 +863,7 @@ def _exec_format(target: Path, op: dict) -> dict:
 
 
 def _exec_move(target: Path, op: dict) -> dict:
-    """move：把含 `src` 的段落**移到**含 `dst` 的段落之后（或之前）。"""
+    """move：**run 级**——把含 `src` 的那段文字移到含 `dst` 的那段文字后（或前）。"""
     src = str(op.get("src") or "").strip()
     dst = str(op.get("dst") or "").strip()
     before = bool(op.get("before"))
@@ -852,27 +872,30 @@ def _exec_move(target: Path, op: dict) -> dict:
     backup = target.with_suffix(target.suffix + ".bak")
     shutil.copy2(target, backup)
     doc = Document(str(target))
-    src_p = dst_p = None
+    src_el = dst_el = None
     for p in _iter_paragraphs(doc):
-        if src_p is None and src in p.text:
-            src_p = p
-        if dst_p is None and dst in p.text:
-            dst_p = p
-    if src_p is None:
+        if src_el is None and src in p.text:
+            mids = _split_runs_at(p, src)
+            if mids:
+                src_el = mids[0]
+        if dst_el is None and dst in p.text:
+            mids = _split_runs_at(p, dst)
+            if mids:
+                dst_el = mids[0]
+    if src_el is None:
         return _fail("not_found", "文档里没找到「%s」。" % src)
-    if dst_p is None:
+    if dst_el is None:
         return _fail("not_found", "文档里没找到目标「%s」。" % dst)
-    if src_p is dst_p:
-        return _fail("bad_plan", "源和目标在同一段，无法移动。")
-    el = src_p._p
-    el.getparent().remove(el)
+    if src_el is dst_el:
+        return _fail("bad_plan", "源和目标同一处，无法移动。")
+    src_el.getparent().remove(src_el)
     if before:
-        dst_p._p.addprevious(el)
+        dst_el.addprevious(src_el)
     else:
-        dst_p._p.addnext(el)
+        dst_el.addnext(src_el)
     doc.save(str(target))
     return {"status": "done", "reason": "move",
-            "message": "✅ 已把含「%s」的段落移到「%s」%s（写前备份：%s）。"
+            "message": "✅ 已把「%s」移到「%s」%s（run 级；写前备份：%s）。"
                        % (src, dst, "前面" if before else "后面", backup.name),
             "applied": 1,
             "plan_ref": None, "audit_ref": None, "user_actions": []}
