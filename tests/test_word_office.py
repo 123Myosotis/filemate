@@ -535,3 +535,29 @@ def test_table_to_text():
     assert r["status"] == "done"
     assert r["reason"] == "table_to_text"
     assert len(Document(str(p)).tables) == 0
+
+
+def test_text_to_table():
+    """跨结构（叙述→表）：`键：值` 段落转成 2 列表格。"""
+    import config
+    import shutil
+    from docx import Document
+    from pipeline.word_office import WordModule
+
+    config.get_api_key = lambda: "k"
+    base = BASE / "t2t2"
+    shutil.rmtree(base, ignore_errors=True)
+    base.mkdir(parents=True, exist_ok=True)
+    p = base / "t2.docx"
+    d = Document()
+    d.add_paragraph("设备概况")
+    d.add_paragraph("名称：A型机")
+    d.add_paragraph("数量：3")
+    d.save(str(p))
+    r = WordModule.handle({"user_input": "把 设备概况 转成表格",
+                           "selected_files": [str(p)]})
+    assert r["status"] == "done"
+    assert r["reason"] == "text_to_table"
+    tables = Document(str(p)).tables
+    assert len(tables) == 1
+    assert [c.text for c in tables[0].rows[0].cells] == ["名称", "A型机"]

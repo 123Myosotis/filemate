@@ -208,6 +208,9 @@ _TABLE_TO_TEXT_PATTERNS = (
     re.compile(r"(?:把|将)\s*(.+?)\s*(?:表格|表)\s*(?:转成|转为|变成|改成)\s*(?:文字|正文|段落)"),
     re.compile(r"(?:把|将)\s*表格\s*(?:转成|转为|变成)\s*(?:文字|正文)"),
 )
+_TEXT_TO_TABLE_PATTERNS = (
+    re.compile(r"(?:把|将)\s*(.+?)\s*(?:转成|转为|变成|改成)\s*表格"),
+)
 
 
 def _plan_ops(text: str) -> list:
@@ -268,6 +271,12 @@ def _plan_ops(text: str) -> list:
             repl = m.group(2).strip().strip("「」\"' ")
             if find and find != repl:
                 return [{"op": "tracked_change", "find": find, "replace": repl}]
+    for pat in _TEXT_TO_TABLE_PATTERNS:
+        m = pat.search(text)
+        if m:
+            find = (m.group(1) or "").strip().strip("「」\"' ")
+            if find:
+                return [{"op": "text_to_table", "find": find}]
     for pat in _TABLE_TO_TEXT_PATTERNS:
         m = pat.search(text)
         if m:
@@ -862,6 +871,53 @@ def _exec_delete(target: Path, op: dict) -> dict:
             "message": "✅ 删除 %d 处「%s」（只删文字，不删段；写前备份：%s）。"
                        % (n, find, backup.name),
             "applied": n,
+            "plan_ref": None, "audit_ref": None, "user_actions": []}
+
+
+def _exec_text_to_table(target: Path, op: dict) -> dict:
+    """**跨结构（叙述→表）**：把 `find` 之后连续的 `键：值` 段落转成 2 列表格。"""
+    find = str(op.get("find") or "").strip()
+    if not find:
+        return _fail("bad_plan", "text_to_table 缺少目标。")
+    backup = target.with_suffix(target.suffix + ".bak")
+    shutil.copy2(target, backup)
+    doc = Document(str(target))
+    paras = list(doc.paragraphs)
+    start = None
+    for i, p in enumerate(paras):
+        if find in p.text:
+            start = i
+            break
+    if start is None:
+        return _fail("not_found", "文档里没找到「%s」。" % find)
+    rows = []
+    body = paras[start]._p.getparent()
+    anchor = paras[start]._p
+    for p in paras[start + 1:]:
+        t = p.text.strip()
+        if not t:
+            break
+        if "：" in t:
+            k, v = t.split("：", 1)
+            rows.append((k.strip(), v.strip()))
+        elif ":" in t:
+            k, v = t.split(":", 1)
+            rows.append((k.strip(), v.strip()))
+        else:
+            break
+        body.remove(p._p)
+    if not rows:
+        return _fail("bad_plan", "「%s」后面没有可转成表的「键：值」段落。" % find)
+    tbl = doc.add_table(rows=len(rows), cols=2)
+    for i, (k, v) in enumerate(rows):
+        tbl.cell(i, 0).text = k
+        tbl.cell(i, 1).text = v
+    anchor.addnext(tbl._tbl)
+    doc.save(str(target))
+    return {"status": "done", "reason": "text_to_table",
+            "message": "✅ 已把 %d 段文字转成表格（写前备份：%s）。"
+                       % (len(rows), backup.name),
+            "applied": len(rows),
             "plan_ref": None, "audit_ref": None, "user_actions": []}
 
 

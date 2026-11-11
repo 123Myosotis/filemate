@@ -59,6 +59,7 @@ class ToolRegistry:
         "tracked_change": "_exec_tracked_change",
         "outline": "_exec_outline",
         "table_to_text": "_exec_table_to_text",
+        "text_to_table": "_exec_text_to_table",
         "l1": "_exec_l1",
     })
 
@@ -69,7 +70,7 @@ class CapabilityManifest:
     supported_formats: list = field(default_factory=lambda: ["docx"])
     op_types: list = field(default_factory=lambda: [
         "inspect", "replace", "insert", "delete", "format", "move",
-        "tracked_change", "outline", "table_to_text",
+        "tracked_change", "outline", "table_to_text", "text_to_table",
     ])
     rejected: list = field(default_factory=lambda: [
         "comment", "content_control", "field", "bookmark",
