@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Word 的**九对象**（规格 §九）：最小可用的 dataclass。
 
-- 三个**已在用**：`Intent` / `DocumentState` / `Plan`（其余 6 个补占位）。
+- **9/9 全用**：Intent / DocumentState / Plan / PatchSet / ToolRegistry /
+  CapabilityManifest / ConfirmationOverlay / IntermediateArtifact / RedactionPolicy。
 - 原则：**不重复造**——能复用 `module.state` 的就不重定义。
 """
 from __future__ import annotations
@@ -61,6 +62,7 @@ class ToolRegistry:
         "table_to_text": "_exec_table_to_text",
         "text_to_table": "_exec_text_to_table",
         "table_to_outline": "_exec_table_to_outline",
+        "outline_to_table": "_exec_outline_to_table",
         "l1": "_exec_l1",
     })
 
@@ -72,7 +74,7 @@ class CapabilityManifest:
     op_types: list = field(default_factory=lambda: [
         "inspect", "replace", "insert", "delete", "format", "move",
         "tracked_change", "outline", "table_to_text", "text_to_table",
-        "table_to_outline",
+        "table_to_outline", "outline_to_table",
     ])
     rejected: list = field(default_factory=lambda: [
         "comment", "content_control", "field", "bookmark",

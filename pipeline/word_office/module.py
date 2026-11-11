@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Word 编辑模块：L0 最小实现（结构检查 + 确定性替换）+ 重架构接口占位。
+"""Word 编辑模块：**11 种 op 全落地**（replace/insert/delete/format/move/tracked_change
++ outline + 表↔叙述/大纲双向），run/结构级。
 
-重架构（九对象/七状态机/决策表/Overlay/preflight/分片/事务层/五角色/审计）
-在本文件里全部以**占位函数**存在，后续按需替换实现（不改调用点）。
+重架构（九对象/七状态机/决策表/Overlay/preflight/分片）**已接进主流程**；
+仅剩 `_authorize`（v4 五角色，明确不做）与 `_audit`（双通道审计）两个占位。
 """
 from __future__ import annotations
 
@@ -18,7 +19,7 @@ import config
 from .state import is_clean, predicates, scan
 
 # ---------------------------------------------------------------
-# 重架构占位（后续接；现在不改行为）
+# 决策/门/授权/审计（`_authorize`=`v4 不做`；`_audit`=双通道审计未接）
 # ---------------------------------------------------------------
 
 
@@ -91,18 +92,13 @@ def _preflight(plan: dict) -> dict:
     return {"ok": True, "reason": ""}
 
 
-def _maybe_split(state: dict) -> list:
-    """分片占位：现在不分片。"""
-    return [state]
-
-
 def _authorize(request: dict) -> bool:
-    """五角色/双人确认占位：单用户，直接放行。"""
+    """**v4 五角色/双人确认：明确不做**（单用户，直接放行）。"""
     return True
 
 
 def _audit(event: dict) -> None:
-    """审计占位：现在不落盘（后续接双通道审计）。"""
+    """**双通道审计未接**（证据已由 `evidence.py` 落 gzip；这里留审计位）。"""
     return None
 
 
@@ -459,7 +455,7 @@ class WordModule:
                 stages, warnings=pre["warnings"])
         warnings = list(pre["warnings"])
 
-        pre2 = _preflight(plan)  # 旧占位，保留（现在实际由 pre_check 承担）
+        pre2 = _preflight(plan)  # 能力执行器校验（`no_executor` 拒；pre_check 之外的第二道门）
         if not pre2.get("ok"):
             return _finish(_fail("preflight", str(pre2.get("reason") or "")),
                            stages, warnings=warnings)

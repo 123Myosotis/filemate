@@ -17,22 +17,23 @@
 
 ## 0. 规格对照（**权威规格**：`docs/specs/word_office_spec.md`）
 
-> **当前 = v1**（L0 + L1 + 校验 + 记忆 + 任务链）；**v2（L2）/ v3（L3）未开始**。
+> **当前 = v1 已落地；v2（跨结构）已做；v3（事务层）部分**；**v4（企业级）不做**。
 
 | 规格里的 | 状态 | 说明 |
 |---|---|---|
-| **L0**（确定性） | ✅ | 结构检查 + 确定性替换 |
-| **L1**（轻 AI） | ✅ | AI 建议 + 白名单 + 校验 |
-| **L2**（跨结构语义） | ❌ **未开始** | 大纲 / 表↔叙述 / 批注驱动 |
-| **L3**（事务层） | ❌ **未开始** | 修订 / 控件 / 交叉引用 |
-| 九对象 | ⚠️ **3/9** | 只有 Intent/DocumentState/Plan；其余 6 个**占位** |
-| 七状态机 | ⚠️ **3/7** | done/failed/partially_completed；缺 4 个 |
-| 决策表 | ⚠️ **关键词版** | 不是规则表 |
-| Overlay / preflight | ⚠️ **stub** | 占位 |
-| 分片（`route_before_scan`） | ⚠️ **只做 `chunk`** | 没有路由 |
-| 事务层（L3） | ❌ **未开始** | — |
+| **L0**（确定性） | ✅ | = A 级 + `replace` / `inspect` |
+| **L1**（轻 AI） | ✅ | = B 级 + `l1` |
+| **L2**（跨结构语义） | ✅ **已做** | 表↔叙述 双向 + 表↔大纲 双向 + `outline`（历史名，见 §10） |
+| **L3**（事务层） | ⚠️ **部分** | `tracked_change` + `dry_run`/回滚（`.bak`+独立备份）；**正式事务层**未做 |
+| 九对象 | ✅ **9/9** | `objects.py` 全接进主流程 |
+| 七状态机 | ✅ **7/7** | done/failed/partially_completed/plan_invalidated/failed_postcheck/compensation_failed/rollback_failed |
+| 决策表 | ✅ **规则表** | 契约 `decision_rules` + `intent_rules` |
+| Overlay | ✅ | `delete`/`tracked_change` → modal，接 GUI 弹窗 |
+| preflight | ✅ **真校验** | 每个 op 在 `ToolRegistry`（`no_executor` 拒） |
+| 分片（`route_before_scan`） | ✅ | `chunk.route`（大文档提示）+ `chunk` 切块 |
+| **v4**（企业级：五角色/双人确认） | ❌ **不做** | 明确不做 |
 
-**结论**：**v1 已落地；v2/v3 未开始**——**不要误以为"规格全做了"**。
+**结论**：**v1 落地、v2（跨结构）已做、v3（事务层）部分、v4 不做**。**真缺口 = 正式事务层 + 批注/控件/交叉引用 + 语义召回**。
 
 ---
 
@@ -356,19 +357,22 @@ word_memory（Word 自己的表）
 
 ---
 
-## 10. Word 操作清单（**规格 6 种，现做 1 种**）
+## 10. Word 操作清单（**11 种，全 done**）
 
-> 规格（`docs/specs/word_office_spec.md` 第 270 行）：`op_type = ["replace","insert","delete","move","format","tracked_change"]`
+> 规格 6 种 `op_type` + 跨结构 4 种 + `outline`，**全 run/结构级落地**。
 
-| op_type | 状态 | 优先级 |
+| op_type | 状态 | 说明 |
 |---|---|---|
-| **`replace`** | ✅ 已做 | — |
-| **`insert`** | ❌ 未做 | **P0** |
-| **`delete`** | ❌ 未做 | **P0** |
-| **`format`** | ❌ 未做 | **P1** |
-| **`move`** | ❌ 未做 | **P2** |
-| **`tracked_change`** | ❌ 未做 | **P3** |
+| `replace` | ✅ | run 级 + 跨 run 段落级 |
+| `insert` | ✅ | 标题段级 / 非标题内联（双行为） |
+| `delete` | ✅ | 只删目标文字（危险 → 确认） |
+| `format` | ✅ | 粗体/斜体/字号/字体/颜色 |
+| `move` | ✅ | run 级（带标点） |
+| `tracked_change` | ✅ | run 级 `w:del`/`w:ins` |
+| `outline` | ✅ | 改标题层级 |
+| `table_to_text` / `text_to_table` | ✅ | 表↔叙述 双向 |
+| `table_to_outline` / `outline_to_table` | ✅ | 表↔大纲 双向 |
 
-**读能力**：段落/样式/大纲 ✅；修订 ❌；批注 ❌；交叉引用 ⚠️ 部分。
+**读能力**：段落/样式/大纲 ✅；修订（`tracked_change`）✅；批注 ❌；控件 ❌；交叉引用 ❌。
 
-**一句话**：**Word 是瘸子——先补 `insert`/`delete`/`format`**，再谈 L2/L3。
+**一句话**：**Word 可写回能力已齐**；**真缺口 = 正式事务层 + 批注/控件/交叉引用 + 语义召回**。
