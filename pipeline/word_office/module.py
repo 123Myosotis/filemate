@@ -214,6 +214,10 @@ _TEXT_TO_TABLE_PATTERNS = (
 _TABLE_TO_OUTLINE_PATTERNS = (
     re.compile(r"(?:把|将)\s*(.+?)\s*(?:表格|表)\s*(?:转成|转为|变成|改成)\s*(?:大纲|标题)"),
 )
+_OUTLINE_TO_TABLE_PATTERNS = (
+    re.compile(r"(?:把|将)\s*(.+?)\s*(?:大纲|标题)\s*(?:转成|转为|变成|改成)\s*(?:表格|表)"),
+    re.compile(r"(?:把|将)\s*(?:大纲|标题)\s*(?:转成|转为|变成|改成)\s*(?:表格|表)"),
+)
 
 
 def _plan_ops(text: str) -> list:
@@ -274,6 +278,12 @@ def _plan_ops(text: str) -> list:
             repl = m.group(2).strip().strip("「」\"' ")
             if find and find != repl:
                 return [{"op": "tracked_change", "find": find, "replace": repl}]
+    # **先说"大纲→表"**（因为它和"X 转成表格"长得像）
+    for pat in _OUTLINE_TO_TABLE_PATTERNS:
+        m = pat.search(text)
+        if m:
+            find = (m.group(1) if m.groups() else "").strip().strip("「」\"' ")
+            return [{"op": "outline_to_table", "find": find}]
     for pat in _TABLE_TO_OUTLINE_PATTERNS:
         m = pat.search(text)
         if m:
@@ -880,6 +890,48 @@ def _exec_delete(target: Path, op: dict) -> dict:
             "message": "✅ 删除 %d 处「%s」（只删文字，不删段；写前备份：%s）。"
                        % (n, find, backup.name),
             "applied": n,
+            "plan_ref": None, "audit_ref": None, "user_actions": []}
+
+
+def _exec_outline_to_table(target: Path, op: dict) -> dict:
+    """**跨结构（大纲→表）**：把 `find` 之后的标题 → 2 列表格（标题 + 层级）。"""
+    find = str(op.get("find") or "").strip()
+    backup = target.with_suffix(target.suffix + ".bak")
+    shutil.copy2(target, backup)
+    doc = Document(str(target))
+    paras = list(doc.paragraphs)
+    start = -1
+    if find:
+        for i, p in enumerate(paras):
+            if find in p.text:
+                start = i
+                break
+        if start < 0:
+            return _fail("not_found", "文档里没找到「%s」。" % find)
+    rows = []
+    for p in paras[start + 1:]:
+        name = p.style.name or ""
+        if name.startswith("Heading"):
+            try:
+                level = int(name.split()[-1])
+            except (ValueError, IndexError):
+                level = 1
+            rows.append((p.text.strip(), str(level)))
+        elif not p.text.strip():
+            continue
+    if not rows:
+        return _fail("bad_plan", ("「%s」后面没有标题。" % find) if find else "文档里没有标题。")
+    tbl = doc.add_table(rows=len(rows), cols=2)
+    for i, (title, level) in enumerate(rows):
+        tbl.cell(i, 0).text = title
+        tbl.cell(i, 1).text = "标题 %s 级" % level
+    anchor_el = paras[start]._p if start >= 0 else paras[0]._p
+    anchor_el.addnext(tbl._tbl)
+    doc.save(str(target))
+    return {"status": "done", "reason": "outline_to_table",
+            "message": "✅ 已把 %d 个标题转成表格（写前备份：%s）。"
+                       % (len(rows), backup.name),
+            "applied": len(rows),
             "plan_ref": None, "audit_ref": None, "user_actions": []}
 
 

@@ -14,7 +14,7 @@
 |---|---|---|
 | **L0**（确定性） | ✅ | = **A 级** + `replace` / `inspect` |
 | **L1**（轻 AI） | ✅ | = **B 级** + `l1` |
-| **L2**（跨结构语义） | ⚠️ **部分** | **表→叙述 / 叙述→表 / 表→大纲** 已做（+`outline`）；**大纲→表**未做 |
+| **L2**（跨结构语义） | ✅ **已做** | **表↔叙述 双向**（`table_to_text`/`text_to_table`）+ **表↔大纲 双向**（`table_to_outline`/`outline_to_table`）+ `outline` |
 | **L3**（事务层） | ⚠️ **部分** | `tracked_change`（`w:del`/`w:ins`）+ **dry-run/回滚**（`.bak` 恢复）已做；**正式事务层**未做 |
 | **九对象** | ✅ **9/9（全用）** | `objects.py`：Intent/DocumentState/Plan/**PatchSet**/**ToolRegistry**/**CapabilityManifest**/**ConfirmationOverlay**/**IntermediateArtifact**/**RedactionPolicy** |
 | **七状态机** | ✅ **7/7** | `done`/`failed`/`partially_completed`/`plan_invalidated`/`failed_postcheck`/`compensation_failed`/`rollback_failed` |
@@ -41,6 +41,7 @@
 | **`table_to_text`** | ✅ | **跨结构（表→叙述）**：表格逐行转段落，表格删除；**找不到表 → 转全部 + 提示** |
 | **`text_to_table`** | ✅ | **跨结构（叙述→表）**：`键：值` 连续段落 → 2 列表格 |
 | **`table_to_outline`** | ✅ | **跨结构（表→大纲）**：表格首列 → `Heading 1`（表格删除） |
+| **`outline_to_table`** | ✅ | **跨结构（大纲→表）**：标题 → 2 列表格（标题 + 层级）；**空 find → 全篇标题** |
 
 ### `insert` 的**双行为**（**明确约定**）
 

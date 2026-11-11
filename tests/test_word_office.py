@@ -587,3 +587,29 @@ def test_table_to_outline():
     assert r["status"] == "done"
     assert r["reason"] == "table_to_outline"
     assert len(Document(str(p)).tables) == 0
+
+
+def test_outline_to_table():
+    """跨结构（大纲→表）：标题 → 2 列表格（标题 + 层级）。"""
+    import config
+    import shutil
+    from docx import Document
+    from pipeline.word_office import WordModule
+
+    config.get_api_key = lambda: "k"
+    base = BASE / "o2t"
+    shutil.rmtree(base, ignore_errors=True)
+    base.mkdir(parents=True, exist_ok=True)
+    p = base / "o.docx"
+    d = Document()
+    d.add_paragraph("大纲")
+    d.add_heading("一、总览", level=1)
+    d.add_heading("二、明细", level=2)
+    d.save(str(p))
+    r = WordModule.handle({"user_input": "把 大纲 转成表格",
+                           "selected_files": [str(p)]})
+    assert r["status"] == "done"
+    assert r["reason"] == "outline_to_table"
+    tables = Document(str(p)).tables
+    assert len(tables) == 1
+    assert [c.text for c in tables[0].rows[0].cells] == ["一、总览", "标题 1 级"]
