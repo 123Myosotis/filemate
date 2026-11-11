@@ -211,6 +211,9 @@ _TABLE_TO_TEXT_PATTERNS = (
 _TEXT_TO_TABLE_PATTERNS = (
     re.compile(r"(?:把|将)\s*(.+?)\s*(?:转成|转为|变成|改成)\s*表格"),
 )
+_TABLE_TO_OUTLINE_PATTERNS = (
+    re.compile(r"(?:把|将)\s*(.+?)\s*(?:表格|表)\s*(?:转成|转为|变成|改成)\s*(?:大纲|标题)"),
+)
 
 
 def _plan_ops(text: str) -> list:
@@ -271,6 +274,12 @@ def _plan_ops(text: str) -> list:
             repl = m.group(2).strip().strip("「」\"' ")
             if find and find != repl:
                 return [{"op": "tracked_change", "find": find, "replace": repl}]
+    for pat in _TABLE_TO_OUTLINE_PATTERNS:
+        m = pat.search(text)
+        if m:
+            find = (m.group(1) or "").strip().strip("「」\"' ")
+            if find:
+                return [{"op": "table_to_outline", "find": find}]
     for pat in _TEXT_TO_TABLE_PATTERNS:
         m = pat.search(text)
         if m:
@@ -870,6 +879,48 @@ def _exec_delete(target: Path, op: dict) -> dict:
     return {"status": "done", "reason": "delete",
             "message": "✅ 删除 %d 处「%s」（只删文字，不删段；写前备份：%s）。"
                        % (n, find, backup.name),
+            "applied": n,
+            "plan_ref": None, "audit_ref": None, "user_actions": []}
+
+
+def _exec_table_to_outline(target: Path, op: dict) -> dict:
+    """**跨结构（表→大纲）**：表格**首列**每格 → 一级标题（表格删除）。"""
+    find = str(op.get("find") or "").strip()
+    backup = target.with_suffix(target.suffix + ".bak")
+    shutil.copy2(target, backup)
+    doc = Document(str(target))
+    picked = []
+    for t in doc.tables:
+        if not find or any(find in c.text for row in t.rows for c in row.cells):
+            picked.append(t)
+            if find:
+                break
+    if not picked:
+        picked = list(doc.tables)
+    if not picked:
+        return _fail("not_found", "没找到表格。")
+    n = 0
+    for t in picked:
+        titles = []
+        for row in t.rows:
+            first = row.cells[0].text.strip() if row.cells else ""
+            if first:
+                titles.append(first)
+        body = t._tbl.getparent()
+        for title in titles:
+            p = doc.add_paragraph(title)
+            try:
+                p.style = doc.styles["Heading 1"]
+            except Exception:  # noqa: BLE001
+                pass
+            body.addnext(p._p)
+            body = p._p
+            n += 1
+        t._tbl.getparent().remove(t._tbl)
+    doc.save(str(target))
+    return {"status": "done", "reason": "table_to_outline",
+            "message": "✅ 已把 %d 个表格的首列转成 %d 个标题（写前备份：%s）。"
+                       % (len(picked), n, backup.name),
             "applied": n,
             "plan_ref": None, "audit_ref": None, "user_actions": []}
 

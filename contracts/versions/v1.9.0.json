@@ -25,7 +25,8 @@
       "tracked_change",
       "outline",
       "table_to_text",
-      "text_to_table"
+      "text_to_table",
+      "table_to_outline"
     ],
     "decision_rules": [
       {

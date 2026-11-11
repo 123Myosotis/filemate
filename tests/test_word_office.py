@@ -561,3 +561,29 @@ def test_text_to_table():
     tables = Document(str(p)).tables
     assert len(tables) == 1
     assert [c.text for c in tables[0].rows[0].cells] == ["名称", "A型机"]
+
+
+def test_table_to_outline():
+    """跨结构（表→大纲）：表格首列 → 标题。"""
+    import config
+    import shutil
+    from docx import Document
+    from pipeline.word_office import WordModule
+
+    config.get_api_key = lambda: "k"
+    base = BASE / "t2o"
+    shutil.rmtree(base, ignore_errors=True)
+    base.mkdir(parents=True, exist_ok=True)
+    p = base / "t.docx"
+    d = Document()
+    t = d.add_table(rows=2, cols=2)
+    t.cell(0, 0).text = "一、总览"
+    t.cell(0, 1).text = "说明"
+    t.cell(1, 0).text = "二、明细"
+    t.cell(1, 1).text = "说明"
+    d.save(str(p))
+    r = WordModule.handle({"user_input": "把 设备表 表格转成大纲",
+                           "selected_files": [str(p)]})
+    assert r["status"] == "done"
+    assert r["reason"] == "table_to_outline"
+    assert len(Document(str(p)).tables) == 0
