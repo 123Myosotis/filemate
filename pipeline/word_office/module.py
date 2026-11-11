@@ -185,7 +185,7 @@ _INSERT_PATTERNS = (
     re.compile(r"把\s*(.+?)\s*(?:后面|之后|后)\s*插入\s*(.+?)(?:[。，,；;]|$)"),
 )
 _DELETE_PATTERNS = (
-    re.compile(r"(?:删除|删掉|去掉)(?!\s*原标题)\s*(?:这一段|这一行|这一句)?\s*(.+?)(?:[。，,；;]|$)"),
+    re.compile(r"(?:删除|删掉|去掉)(?!\s*原)\s*(?:这一段|这一行|这一句)?\s*(.+?)(?:[。，,；;]|$)"),
 )
 _FORMAT_PATTERNS = (
     re.compile(r"(?:把|将)\s*(.+?)\s*(?:加粗|设为粗体|变粗)"),
@@ -218,6 +218,9 @@ _OUTLINE_TO_TABLE_PATTERNS = (
     re.compile(r"(?:把|将)\s*(.+?)\s*(?:大纲|标题)\s*(?:转成|转为|变成|改成)\s*(?:表格|表)"),
     re.compile(r"(?:把|将)\s*(?:大纲|标题)\s*(?:转成|转为|变成|改成)\s*(?:表格|表)"),
 )
+
+# caption（表标题）向前查找的最大段落数（"隔几段"仍能定位表标题）
+_CAPTION_LOOKBACK = 5
 
 
 def _plan_ops(text: str) -> list:
@@ -277,8 +280,8 @@ def _plan_ops(text: str) -> list:
         m = pat.search(text)
         if m:
             find = (m.group(1) if m.groups() else "").strip().strip("「」\"' ")
-            # **删除原标题 = 显式 opt-in**（默认保留，安全）
-            remove = bool(re.search(r"(?:删除原标题|移除原标题|去掉原标题|搬走原标题|搬走)", text))
+            # **删除原标题 = 显式 opt-in**（默认保留，安全）；`原` 泛化覆盖"原文/原表格/原段落"
+            remove = bool(re.search(r"(?:删除|移除|去掉)\s*原|搬走", text))
             return [{"op": "outline_to_table", "find": find, "remove_source": remove}]
     for pat in _TABLE_TO_OUTLINE_PATTERNS:
         m = pat.search(text)
@@ -1057,7 +1060,7 @@ def _exec_table_to_text(target: Path, op: dict) -> dict:
         # **表标题（caption）匹配**：向前找最多 5 段，隔一段也能定位
         for t in doc.tables:
             node = t._tbl.getprevious()
-            for _ in range(5):
+            for _ in range(_CAPTION_LOOKBACK):
                 if node is None or node.tag != qn("w:p"):
                     break
                 txt = "".join(x.text or "" for x in node.iter(qn("w:t")))
