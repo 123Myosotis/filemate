@@ -39,6 +39,32 @@
         "when": {"default": true}
       }
     ],
+    "intent_rules": [
+      {
+        "id": "R_TRACKED",
+        "op": "tracked_change",
+        "priority": 110,
+        "pattern": "(?:修订|留痕|记录修订)[：:]\\s*(?:把|将)\\s*(.+?)\\s*(?:替换成|替换为|改成|改为|换成)\\s*(.+?)(?:[。，,；;]|$)"
+      },
+      {
+        "id": "R_REPLACE",
+        "op": "find_replace",
+        "priority": 100,
+        "pattern": "(?:把|将)\\s*(.+?)\\s*(?:替换成|替换为|改成|改为|换成)\\s*(.+?)(?:[。，,；;]|$)"
+      },
+      {
+        "id": "R_INSERT",
+        "op": "insert",
+        "priority": 90,
+        "pattern": "(?:在|往|向)?\\s*(.+?)\\s*(?:后面|之后|后)\\s*(?:插入|添加|加上|补充)\\s*(.+?)(?:[。，,；;]|$)"
+      },
+      {
+        "id": "R_DELETE",
+        "op": "delete",
+        "priority": 80,
+        "pattern": "(?:删除|删掉|移除)\\s*(.+?)(?:[。，,；;]|$)"
+      }
+    ],
     "budget": {
       "A": 0,
       "B": 2000,

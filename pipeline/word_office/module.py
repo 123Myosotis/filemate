@@ -207,6 +207,43 @@ _OUTLINE_PATTERNS = (
 
 
 def _plan_ops(text: str) -> list:
+    # **规则表优先**（契约 `word_office.intent_rules`）；没有 → 退回正则
+    try:
+        from pipeline.synth_contract.registry import load_contract
+        rules = (load_contract().data.get("word_office") or {}).get("intent_rules") or []
+    except Exception:  # noqa: BLE001
+        rules = []
+    if rules:
+        for rule in sorted(rules, key=lambda r: -int(r.get("priority") or 0)):
+            pat = str(rule.get("pattern") or "")
+            if not pat:
+                continue
+            try:
+                m = re.search(pat, text)
+            except re.error:
+                continue
+            if not m:
+                continue
+            op = str(rule.get("op") or "")
+            if op == "find_replace" and len(m.groups()) >= 2:
+                find = m.group(1).strip().strip("「」\"' ")
+                repl = m.group(2).strip().strip("「」\"' ")
+                if find and find != repl:
+                    return [{"op": "find_replace", "find": find, "replace": repl}]
+            elif op == "insert" and len(m.groups()) >= 2:
+                anchor = m.group(1).strip().strip("「」\"' ")
+                content = m.group(2).strip().strip("「」\"' ")
+                if anchor and content:
+                    return [{"op": "insert", "anchor": anchor, "content": content}]
+            elif op == "tracked_change" and len(m.groups()) >= 2:
+                find = m.group(1).strip().strip("「」\"' ")
+                repl = m.group(2).strip().strip("「」\"' ")
+                if find and find != repl:
+                    return [{"op": "tracked_change", "find": find, "replace": repl}]
+            elif op == "delete" and len(m.groups()) >= 1:
+                find = m.group(1).strip().strip("「」\"' ")
+                if find:
+                    return [{"op": "delete", "find": find}]
     for pat in _INSERT_PATTERNS:
         m = pat.search(text)
         if m:
