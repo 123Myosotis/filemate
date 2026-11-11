@@ -393,6 +393,20 @@ class WordModule:
             bkroot.mkdir(parents=True, exist_ok=True)
             bak2 = bkroot / ("%s_%s" % (time.strftime("%Y%m%d-%H%M%S"), work.name))
             shutil.copy2(work, bak2)
+            # **保留 N 份**（按 mtime 只留最近 20 份/每文件）
+            groups: dict = {}
+            for f in bkroot.iterdir():
+                if not f.is_file():
+                    continue
+                key = f.name.split("_", 1)[-1]
+                groups.setdefault(key, []).append(f)
+            for key, files in groups.items():
+                files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+                for old in files[20:]:
+                    try:
+                        old.unlink()
+                    except OSError:
+                        pass
         except Exception:  # noqa: BLE001
             bak2 = None
 
