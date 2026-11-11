@@ -26,7 +26,8 @@
       "outline",
       "table_to_text",
       "text_to_table",
-      "table_to_outline"
+      "table_to_outline",
+      "outline_to_table"
     ],
     "decision_rules": [
       {
@@ -65,7 +66,7 @@
         "id": "R_DELETE",
         "op": "delete",
         "priority": 80,
-        "pattern": "(?:删除|删掉|移除)\\s*(.+?)(?:[。，,；;]|$)"
+        "pattern": "(?:删除|删掉|移除)(?!\\s*原标题)\\s*(.+?)(?:[。，,；;]|$)"
       }
     ],
     "budget": {

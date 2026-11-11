@@ -185,7 +185,7 @@ _INSERT_PATTERNS = (
     re.compile(r"把\s*(.+?)\s*(?:后面|之后|后)\s*插入\s*(.+?)(?:[。，,；;]|$)"),
 )
 _DELETE_PATTERNS = (
-    re.compile(r"(?:删除|删掉|去掉)\s*(?:这一段|这一行|这一句)?\s*(.+?)(?:[。，,；;]|$)"),
+    re.compile(r"(?:删除|删掉|去掉)(?!\s*原标题)\s*(?:这一段|这一行|这一句)?\s*(.+?)(?:[。，,；;]|$)"),
 )
 _FORMAT_PATTERNS = (
     re.compile(r"(?:把|将)\s*(.+?)\s*(?:加粗|设为粗体|变粗)"),
@@ -265,12 +265,6 @@ def _plan_ops(text: str) -> list:
             content = m.group(2).strip().strip("「」\"' ")
             if anchor and content:
                 return [{"op": "insert", "anchor": anchor, "content": content}]
-    for pat in _DELETE_PATTERNS:
-        m = pat.search(text)
-        if m:
-            find = m.group(1).strip().strip("「」\"' ")
-            if find:
-                return [{"op": "delete", "find": find}]
     for pat in _TRACKED_PATTERNS:
         m = pat.search(text)
         if m:
@@ -283,7 +277,9 @@ def _plan_ops(text: str) -> list:
         m = pat.search(text)
         if m:
             find = (m.group(1) if m.groups() else "").strip().strip("「」\"' ")
-            return [{"op": "outline_to_table", "find": find}]
+            # **删除原标题 = 显式 opt-in**（默认保留，安全）
+            remove = bool(re.search(r"(?:删除原标题|移除原标题|去掉原标题|搬走原标题|搬走)", text))
+            return [{"op": "outline_to_table", "find": find, "remove_source": remove}]
     for pat in _TABLE_TO_OUTLINE_PATTERNS:
         m = pat.search(text)
         if m:
@@ -312,6 +308,12 @@ def _plan_ops(text: str) -> list:
                 return [{"op": "outline", "find": find, "level": 0}]
             num = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6}.get(level, 1)
             return [{"op": "outline", "find": find, "level": num}]
+    for pat in _DELETE_PATTERNS:
+        m = pat.search(text)
+        if m:
+            find = m.group(1).strip().strip("「」\"' ")
+            if find:
+                return [{"op": "delete", "find": find}]
     for pat in _FORMAT_PATTERNS:
         m = pat.search(text)
         if m:
@@ -929,13 +931,16 @@ def _exec_outline_to_table(target: Path, op: dict) -> dict:
         tbl.cell(i, 1).text = level  # 数字层级（可回表 round-trip）
     anchor_el = paras[start]._p if start >= 0 else paras[0]._p
     anchor_el.addnext(tbl._tbl)
-    # 已转的标题删除（与其它"转"操作一致：**搬走，非镜像**）
-    for el in heading_els:
-        el.getparent().remove(el)
+    # **搬走 = 显式 opt-in**（`remove_source` 才删标题；默认保留 = 安全）
+    remove = bool(op.get("remove_source"))
+    if remove:
+        for el in heading_els:
+            el.getparent().remove(el)
     doc.save(str(target))
+    action = "已删除原标题" if remove else "原标题已保留"
     return {"status": "done", "reason": "outline_to_table",
-            "message": "✅ 已把 %d 个标题转成表格（第二列为层级；写前备份：%s）。"
-                       % (len(rows), backup.name),
+            "message": "✅ 已把 %d 个标题转成表格（第二列为层级；%s；写前备份：%s）。"
+                       % (len(rows), action, backup.name),
             "applied": len(rows),
             "plan_ref": None, "audit_ref": None, "user_actions": []}
 
@@ -1049,14 +1054,19 @@ def _exec_table_to_text(target: Path, op: dict) -> dict:
                 break
     note = ""
     if not picked and find:
-        # **表标题（caption）匹配**：找表格前紧邻的段落
+        # **表标题（caption）匹配**：向前找最多 5 段，隔一段也能定位
         for t in doc.tables:
-            prev = t._tbl.getprevious()
-            if prev is not None and prev.tag == qn("w:p"):
-                txt = "".join(x.text or "" for x in prev.iter(qn("w:t")))
+            node = t._tbl.getprevious()
+            for _ in range(5):
+                if node is None or node.tag != qn("w:p"):
+                    break
+                txt = "".join(x.text or "" for x in node.iter(qn("w:t")))
                 if find in txt:
                     picked.append(t)
                     break
+                node = node.getprevious()
+            if picked:
+                break
         if picked:
             note = "（按表标题「%s」定位）" % find
     if not picked:

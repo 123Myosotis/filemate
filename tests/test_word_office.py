@@ -555,6 +555,7 @@ def test_table_to_text_by_caption():
     p = base / "c.docx"
     d = Document()
     d.add_paragraph("设备表")
+    d.add_paragraph("（隔一段的说明）")   # caption 与表之间隔一段
     t = d.add_table(rows=2, cols=2)
     t.cell(0, 0).text = "名称"
     t.cell(0, 1).text = "数量"
@@ -662,7 +663,7 @@ def test_table_to_outline():
 
 
 def test_outline_to_table():
-    """跨结构（大纲→表）：标题 → 2 列表格（标题 + 数字层级），标题被搬走。"""
+    """跨结构（大纲→表）：标题 → 2 列表格（标题 + 数字层级），**默认保留原标题**。"""
     import config
     import shutil
     from docx import Document
@@ -686,6 +687,33 @@ def test_outline_to_table():
     tables = d2.tables
     assert len(tables) == 1
     assert [c.text for c in tables[0].rows[0].cells] == ["一、总览", "1"]
-    # 标题已搬走（非镜像）
+    # 默认保留原标题（非破坏性）
+    heads = [q.text for q in d2.paragraphs if (q.style.name or "").startswith("Heading")]
+    assert heads == ["一、总览", "二、明细"]
+
+
+def test_outline_to_table_remove_source():
+    """跨结构（大纲→表）：显式「并删除原标题」→ 标题被搬走。"""
+    import config
+    import shutil
+    from docx import Document
+    from pipeline.word_office import WordModule
+
+    config.get_api_key = lambda: "k"
+    base = BASE / "o2t_del"
+    shutil.rmtree(base, ignore_errors=True)
+    base.mkdir(parents=True, exist_ok=True)
+    p = base / "o.docx"
+    d = Document()
+    d.add_paragraph("大纲")
+    d.add_heading("一、总览", level=1)
+    d.add_heading("二、明细", level=2)
+    d.save(str(p))
+    r = WordModule.handle({"user_input": "把 大纲 转成表格并删除原标题",
+                           "selected_files": [str(p)]})
+    assert r["status"] == "done"
+    assert r["reason"] == "outline_to_table"
+    d2 = Document(str(p))
+    assert len(d2.tables) == 1
     heads = [q.text for q in d2.paragraphs if (q.style.name or "").startswith("Heading")]
     assert heads == []
