@@ -20,8 +20,9 @@
 | **七状态机** | ✅ **7/7** | `done`/`failed`/`partially_completed`/`plan_invalidated`/`failed_postcheck`/`compensation_failed`/`rollback_failed` |
 | **决策表** | ✅ **规则表** | 契约 `word_office.decision_rules`（`_decide_tier` 读契约） |
 | **Overlay** | ✅ **接进 `_apply_overlay`** | `delete`/`tracked_change` → `modal`（**并接 GUI 弹窗**） |
-| preflight | ⚠️ **stub** | 占位函数（Pre-check 已覆盖） |
+| preflight | ✅ **真校验** | 每个 op 必须在 `ToolRegistry`（`no_executor:<op>` 拒） |
 | 分片（`route_before_scan`） | ⚠️ **只做 `chunk`** | 按标题切块，没有路由 |
+| **UI 冒烟** | ✅ **`test_ui_smoke.py`** | offscreen 构造 `MainWindow`（**只"起得来"**，不做交互自动化） |
 
 ---
 
