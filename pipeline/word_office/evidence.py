@@ -14,12 +14,28 @@ ROOT = Path(__file__).resolve().parents[2]
 DIR = ROOT / "storage" / "evidence" / "word"
 
 
+def _redact(event: dict) -> dict:
+    """**RedactionPolicy**：落盘前抹掉敏感字段（默认 api_key / authorization）。"""
+    try:
+        from .objects import RedactionPolicy
+        masks = {m.lower() for m in RedactionPolicy().mask_fields}
+    except Exception:  # noqa: BLE001
+        masks = {"api_key", "authorization"}
+    out = {}
+    for k, v in (event or {}).items():
+        if str(k).lower() in masks:
+            out[k] = "<redacted>"
+        else:
+            out[k] = v
+    return out
+
+
 def write_evidence(event: dict) -> str:
     DIR.mkdir(parents=True, exist_ok=True)
     ts = "%s-%09d" % (time.strftime("%Y%m%d-%H%M%S"), time.time_ns() % 1_000_000_000)
     path = DIR / (ts + ".json.gz")
     with gzip.open(path, "wt", encoding="utf-8") as f:
-        json.dump(event, f, ensure_ascii=False, default=str)
+        json.dump(_redact(event), f, ensure_ascii=False, default=str)
     _cleanup()
     return str(path)
 

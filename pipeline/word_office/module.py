@@ -409,8 +409,10 @@ def _memory_blob(related) -> str:
         return text
 
 
-def _portrait(target: Path, state: dict, limit: int = 30, related=None) -> str:
-    """文档画像：段落数 + 标题样式 + 前 N 段正文（轻量，不传全文）。"""
+def _portrait(target: Path, state: dict, limit: int = 30, related=None):
+    """文档画像：**返回 `IntermediateArtifact`**（kind=portrait，payload.text）。"""
+    from .objects import IntermediateArtifact
+
     doc = Document(str(target))
     paras = [p.text.strip() for p in doc.paragraphs if p.text.strip()][:limit]
     heads = [k for k in state["styles"] if "Heading" in k or k == "Title"]
@@ -420,7 +422,8 @@ def _portrait(target: Path, state: dict, limit: int = 30, related=None) -> str:
     blob = _memory_blob(related)
     if blob:
         base += "\n历史相关文件：" + blob
-    return base
+    return IntermediateArtifact(kind="portrait", ref=str(target),
+                                payload={"text": base})
 
 
 def _exec_l1(target: Path, state: dict, preds: dict, user_input: str,
@@ -431,7 +434,7 @@ def _exec_l1(target: Path, state: dict, preds: dict, user_input: str,
         return _fail("no_key", "L1 需要 API Key，请先在设置里配置。")
     from .ai import call_l1
 
-    data = call_l1(user_input, _portrait(target, state, related=related), api_key)
+    data = call_l1(user_input, _portrait(target, state, related=related).payload["text"], api_key)
     if not isinstance(data, dict):
         return _fail("ai_failed", "AI 没有返回可用结果。")
 

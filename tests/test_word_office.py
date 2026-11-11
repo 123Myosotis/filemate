@@ -366,3 +366,30 @@ def test_capability_manifest():
     from pipeline.word_office.objects import CapabilityManifest
     ops = set(CapabilityManifest().op_types)
     assert {"replace", "insert", "delete", "format", "move", "tracked_change"} <= ops
+
+
+def test_redaction_policy():
+    """RedactionPolicy：api_key 落盘前被抹掉。"""
+    from pipeline.word_office.evidence import _redact
+    out = _redact({"api_key": "sk-xxx", "user_input": "hi", "authorization": "Bearer y"})
+    assert out["api_key"] == "<redacted>"
+    assert out["authorization"] == "<redacted>"
+    assert out["user_input"] == "hi"
+
+
+def test_intermediate_artifact():
+    """IntermediateArtifact：画像返回结构体（kind/ref/payload）。"""
+    import config
+    from docx import Document
+    from pipeline.word_office.module import _portrait
+    from pipeline.word_office.state import scan
+    monkeypatch = None
+    config.get_api_key = lambda: "k"
+    p = BASE / "art.docx"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    d = Document()
+    d.add_paragraph("甲方是A型机。")
+    d.save(str(p))
+    art = _portrait(p, scan(p))
+    assert art.kind == "portrait"
+    assert art.payload["text"].startswith("段落数")
