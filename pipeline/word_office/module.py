@@ -75,7 +75,18 @@ def _apply_overlay(plan: dict) -> dict:
 
 
 def _preflight(plan: dict) -> dict:
-    """capability_preflight 占位：现在放行（后续加能力/代价/分片）。"""
+    """Preflight：**能力执行器**校验（每个 op 必须在 `ToolRegistry` 里）。"""
+    try:
+        from .objects import ToolRegistry
+        tools = ToolRegistry().tools
+    except Exception:  # noqa: BLE001
+        tools = {}
+    for op in (plan.get("operations") or []):
+        name = str(op.get("op") or "")
+        if not name:
+            return {"ok": False, "reason": "op_empty"}
+        if tools and name not in tools and name not in ("find_replace", "l1"):
+            return {"ok": False, "reason": "no_executor:%s" % name}
     return {"ok": True, "reason": ""}
 
 
@@ -179,6 +190,7 @@ _FORMAT_PATTERNS = (
     re.compile(r"(?:把|将)\s*(.+?)\s*(?:加粗|设为粗体|变粗)"),
     re.compile(r"(?:把|将)\s*(.+?)\s*(?:改斜体|设为斜体)"),
     re.compile(r"(?:把|将)\s*(.+?)\s*(?:设为|改成|改为)\s*(\d+)\s*(?:号|磅|pt)"),
+    re.compile(r"(?:把|将)\s*(.+?)\s*(?:设为|改成|改为)\s*(红|蓝|绿|黑|黄)色?"),
     re.compile(r"(?:把|将)\s*(.+?)\s*(?:设为|改成|改为)\s*([\u4e00-\u9fff]{2,4})\s*字体"),
 )
 _MOVE_PATTERNS = (
@@ -224,6 +236,10 @@ def _plan_ops(text: str) -> list:
             if size:
                 return [{"op": "format", "find": find, "mode": "size",
                          "size": int(size.group(1))}]
+            color = re.search(r"(?:设为|改成|改为)\s*(红|蓝|绿|黑|黄)色?", text)
+            if color:
+                return [{"op": "format", "find": find, "mode": "color",
+                         "color": color.group(1)}]
             font = re.search(r"(?:设为|改成|改为)\s*([\u4e00-\u9fff]{2,4})\s*字体", text)
             if font:
                 return [{"op": "format", "find": find, "mode": "font",
@@ -713,6 +729,7 @@ def _exec_format(target: Path, op: dict) -> dict:
     mode = str(op.get("mode") or "bold")
     size = op.get("size")
     font = str(op.get("font") or "").strip()
+    color = str(op.get("color") or "").strip()
     if not find:
         return _fail("bad_plan", "format 缺少目标文本。")
     backup = target.with_suffix(target.suffix + ".bak")
@@ -732,6 +749,18 @@ def _exec_format(target: Path, op: dict) -> dict:
             elif mode == "size":
                 if size:
                     run.font.size = Pt(int(size))
+            elif mode == "color":
+                if color:
+                    from docx.shared import RGBColor
+                    rgb = {
+                        "红": RGBColor(0xC0, 0x00, 0x00),
+                        "蓝": RGBColor(0x00, 0x00, 0xC0),
+                        "绿": RGBColor(0x00, 0x70, 0x30),
+                        "黑": RGBColor(0x00, 0x00, 0x00),
+                        "黄": RGBColor(0xC0, 0x80, 0x00),
+                    }.get(color)
+                    if rgb is not None:
+                        run.font.color.rgb = rgb
             else:
                 run.bold = True
             n += 1

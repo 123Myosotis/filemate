@@ -393,3 +393,22 @@ def test_intermediate_artifact():
     art = _portrait(p, scan(p))
     assert art.kind == "portrait"
     assert art.payload["text"].startswith("段落数")
+
+
+def test_preflight():
+    """preflight：没有执行器的 op → 拒。"""
+    from pipeline.word_office.module import _preflight
+    assert _preflight({"operations": [{"op": "insert"}]})["ok"] is True
+    bad = _preflight({"operations": [{"op": "nope"}]})
+    assert bad["ok"] is False
+    assert "no_executor" in bad["reason"]
+
+
+def test_format_color(docx, monkeypatch):
+    """format 颜色：设为红色。"""
+    import config
+    monkeypatch.setattr(config, "get_api_key", lambda: "k")
+    r = WordModule.handle({"user_input": "把 甲方是A型机 设为红色",
+                           "selected_files": [str(docx)]})
+    assert r["status"] == "done"
+    assert r["reason"] == "format"
