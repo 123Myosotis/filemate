@@ -18,6 +18,7 @@ def _clean():
     try:
         conn.execute("DELETE FROM memory_file WHERE hash LIKE 'test-%'")
         conn.execute("DELETE FROM memory_file_fts WHERE hash LIKE 'test-%'")
+        conn.execute("DELETE FROM memory_vec WHERE hash LIKE 'test-%'")
         conn.commit()
     except Exception:  # noqa: BLE001
         pass
@@ -31,6 +32,25 @@ def test_save_get():
     assert r is not None
     assert r["summary"] == "设备台账"
     assert r["keywords"] == "设备、负责人"
+
+
+def _fake_embed(text, model="", timeout=20):
+    # "设备/机器/台账/清单" → 同一向量；否则正交
+    if any(k in (text or "") for k in ("设备", "机器", "台账", "清单")):
+        return [1.0, 0.0, 0.0]
+    return [0.0, 1.0, 0.0]
+
+
+def test_recall_semantic_third_channel(monkeypatch):
+    """向量第三路：FTS5/LIKE 字面 miss 时，语义向量也能召回。"""
+    import ai.embed as emb
+    monkeypatch.setattr(emb, "is_available", lambda: True)
+    monkeypatch.setattr(emb, "embed", _fake_embed)
+    memory.save_file_memory("test-vec-target", "/tmp/t.docx", "设备台账", "设备、负责人")
+    memory.save_file_memory("test-vec-noise", "/tmp/n.docx", "无关内容", "其他")
+    hits = memory.recall("机器清单", limit=5)
+    hashes = [h["hash"] for h in hits]
+    assert "test-vec-target" in hashes
 
 
 def test_overwrite_same_hash():

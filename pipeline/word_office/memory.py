@@ -112,6 +112,16 @@ def save_file_memory(hash: str, path: str = "", summary: str = "",
         conn.commit()
     finally:
         conn.close()
+    # 向量通道：有 embedding Key 时给 summary/keywords 存向量（供 `recall` 第三路）
+    try:
+        from ai import embed
+        if embed.is_available():
+            text = " ".join(x for x in (summary, keywords) if x).strip() or path or hash
+            vec = embed.embed(text)
+            if vec:
+                save_vec(hash, vec)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def get_file_memory(hash: str) -> dict | None:
@@ -351,9 +361,7 @@ def _like_hits(q: str, k: int) -> list[str]:
 
 
 def recall(query: str, limit: int = 10, rrf_k: int = 60) -> list[dict]:
-    """混合召回（proto）：**FTS5 + LIKE 两路 → RRF 融合**。
-
-    **不做向量**（Word 暂无 embedding）；等有 embedding 再加第三路。
+    """混合召回：**FTS5 + LIKE + 向量（有 embedding Key 才加）三路 → RRF 融合**。
     """
     q = str(query or "").strip()
     if not q:
