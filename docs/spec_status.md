@@ -14,7 +14,7 @@
 |---|---|---|
 | **L0**（确定性） | ✅ | = **A 级** + `replace` / `inspect` |
 | **L1**（轻 AI） | ✅ | = **B 级** + `l1` |
-| **L2**（跨结构语义） | ⚠️ **部分** | `move`/`tracked_change` 已做（**段级**）；**跨结构**（表↔叙述/大纲）未做 |
+| **L2**（跨结构语义） | ⚠️ **部分** | `move`/`tracked_change`/`outline`/`table_to_text` 已做；**文字→表**、**表↔大纲**未做 |
 | **L3**（事务层） | ⚠️ **部分** | `tracked_change`（`w:del`/`w:ins`）+ **dry-run/回滚**（`.bak` 恢复）已做；**正式事务层**未做 |
 | **九对象** | ✅ **9/9（全用）** | `objects.py`：Intent/DocumentState/Plan/**PatchSet**/**ToolRegistry**/**CapabilityManifest**/**ConfirmationOverlay**/**IntermediateArtifact**/**RedactionPolicy** |
 | **七状态机** | ✅ **7/7** | `done`/`failed`/`partially_completed`/`plan_invalidated`/`failed_postcheck`/`compensation_failed`/`rollback_failed` |
@@ -38,6 +38,7 @@
 | `move` | ✅ | **段级移动**（同段/找不到拒绝） |
 | `tracked_change` | ✅ | **run 级** `w:del`/`w:ins`（只包目标文字，保留前后格式） |
 | **`outline`** | ✅ | **改标题层级**（`Heading N` / `Normal`）——**跨结构最小版** |
+| **`table_to_text`** | ✅ | **跨结构（表→叙述）**：表格逐行转段落，表格删除；**找不到表 → 转全部 + 提示** |
 
 ### `insert` 的**双行为**（**明确约定**）
 
