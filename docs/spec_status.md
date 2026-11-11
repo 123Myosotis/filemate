@@ -12,10 +12,11 @@
 | **L1**（轻 AI） | ✅ | = **B 级** + `l1` |
 | **L2**（跨结构语义） | ❌ | = **跨结构 `move` / `replace`**（未做） |
 | **L3**（事务层） | ❌ | = **`tracked_change`**（未做） |
-| 九对象 | ✅ **9/9** | `objects.py`：Intent/DocumentState/Plan/PatchSet/ToolRegistry/CapabilityManifest/IntermediateArtifact/RedactionPolicy/ConfirmationOverlay（**3 个在用，6 个结构就绪**） |
+| 九对象 | ✅ **9/9** | `objects.py`：**7 个在用**（Intent/DocumentState/Plan/PatchSet/ToolRegistry/CapabilityManifest/ConfirmationOverlay）；**2 个就绪**（IntermediateArtifact/RedactionPolicy） |
 | 七状态机 | ✅ **7/7** | `done`/`failed`/`partially_completed`/`plan_invalidated`/`failed_postcheck`/`compensation_failed`/`rollback_failed` |
 | 决策表 | ✅ **规则表** | 契约 `word_office.decision_rules`（`_decide_tier` 读契约） |
-| Overlay / preflight | ⚠️ **stub** | 占位函数 |
+| **Overlay** | ✅ **接进 `_apply_overlay`** | `delete`/`tracked_change` → `modal` |
+| preflight | ⚠️ **stub** | 占位函数 |
 | 分片（`route_before_scan`） | ⚠️ **只做 `chunk`** | 按标题切块，没有路由 |
 | 事务层（L3） | ❌ | = `tracked_change`（未做） |
 
