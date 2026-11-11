@@ -57,6 +57,7 @@ class ToolRegistry:
         "format": "_exec_format",
         "move": "_exec_move",
         "tracked_change": "_exec_tracked_change",
+        "outline": "_exec_outline",
         "l1": "_exec_l1",
     })
 
@@ -66,7 +67,8 @@ class CapabilityManifest:
     """能力清单（本模块能做什么/不能做什么）."""
     supported_formats: list = field(default_factory=lambda: ["docx"])
     op_types: list = field(default_factory=lambda: [
-        "inspect", "replace", "insert", "delete", "format", "move", "tracked_change",
+        "inspect", "replace", "insert", "delete", "format", "move",
+        "tracked_change", "outline",
     ])
     rejected: list = field(default_factory=lambda: [
         "comment", "content_control", "field", "bookmark",

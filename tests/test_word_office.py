@@ -437,3 +437,25 @@ def test_rollback(docx, monkeypatch):
     assert r["status"] == "done"
     assert r.get("rollback") is True
     assert docx.read_bytes() == before
+
+
+def test_outline():
+    """outline：标题降级（Heading 1 → Heading 2）。"""
+    import config
+    import shutil
+    from docx import Document
+    from pipeline.word_office import WordModule
+
+    base = BASE / "outline"
+    shutil.rmtree(base, ignore_errors=True)
+    base.mkdir(parents=True, exist_ok=True)
+    p = base / "o.docx"
+    d = Document()
+    d.add_heading("一、总览", level=1)
+    d.save(str(p))
+    config.get_api_key = lambda: "k"
+    r = WordModule.handle({"user_input": "把 一、总览 设为二级标题",
+                           "selected_files": [str(p)]})
+    assert r["status"] == "done"
+    assert r["reason"] == "outline"
+    assert Document(str(p)).paragraphs[0].style.name == "Heading 2"

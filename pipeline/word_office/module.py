@@ -199,6 +199,10 @@ _MOVE_PATTERNS = (
 _TRACKED_PATTERNS = (
     re.compile(r"(?:修订|留痕|记录修订)[：:]\s*(?:把|将)\s*(.+?)\s*(?:替换成|替换为|改成|改为|换成)\s*(.+?)(?:[。，,；;]|$)"),
 )
+_OUTLINE_PATTERNS = (
+    re.compile(r"(?:把|将)\s*(.+?)\s*设为\s*第?\s*([一二三四五六])\s*级标题"),
+    re.compile(r"(?:把|将)\s*(.+?)\s*(?:设为|改成|改为)\s*(段落|正文)"),
+)
 
 
 def _plan_ops(text: str) -> list:
@@ -222,6 +226,17 @@ def _plan_ops(text: str) -> list:
             repl = m.group(2).strip().strip("「」\"' ")
             if find and find != repl:
                 return [{"op": "tracked_change", "find": find, "replace": repl}]
+    for pat in _OUTLINE_PATTERNS:
+        m = pat.search(text)
+        if m:
+            find = m.group(1).strip().strip("「」\"' ")
+            level = m.group(2).strip()
+            if not find:
+                continue
+            if level in ("段落", "正文"):
+                return [{"op": "outline", "find": find, "level": 0}]
+            num = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6}.get(level, 1)
+            return [{"op": "outline", "find": find, "level": num}]
     for pat in _FORMAT_PATTERNS:
         m = pat.search(text)
         if m:
@@ -732,6 +747,35 @@ def _exec_delete(target: Path, op: dict) -> dict:
     return {"status": "done", "reason": "delete",
             "message": "✅ 删除 %d 处「%s」（只删文字，不删段；写前备份：%s）。"
                        % (n, find, backup.name),
+            "applied": n,
+            "plan_ref": None, "audit_ref": None, "user_actions": []}
+
+
+def _exec_outline(target: Path, op: dict) -> dict:
+    """outline：**改标题层级**（`Heading N`）或**降为正文**（`level=0`）。"""
+    find = str(op.get("find") or "").strip()
+    level = int(op.get("level") or 0)
+    if not find:
+        return _fail("bad_plan", "outline 缺少目标文本。")
+    backup = target.with_suffix(target.suffix + ".bak")
+    shutil.copy2(target, backup)
+    doc = Document(str(target))
+    n = 0
+    for p in _iter_paragraphs(doc):
+        if find not in p.text:
+            continue
+        try:
+            p.style = doc.styles["Heading %d" % level] if level > 0 else doc.styles["Normal"]
+            n += 1
+        except Exception:  # noqa: BLE001
+            continue
+    if n == 0:
+        return _fail("not_found", "文档里没找到「%s」。" % find)
+    doc.save(str(target))
+    label = ("%d 级标题" % level) if level > 0 else "正文"
+    return {"status": "done", "reason": "outline",
+            "message": "✅ 已把含「%s」的 %d 段设为%s（写前备份：%s）。"
+                       % (find, n, label, backup.name),
             "applied": n,
             "plan_ref": None, "audit_ref": None, "user_actions": []}
 

@@ -22,7 +22,8 @@
       "delete",
       "format",
       "move",
-      "tracked_change"
+      "tracked_change",
+      "outline"
     ],
     "decision_rules": [
       {
