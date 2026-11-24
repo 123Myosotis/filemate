@@ -12,8 +12,8 @@ def test_entry_copy_not_vendor_locked():
     blob = WELCOME_HTML + INPUT_PLACEHOLDER + HELP_HTML
     assert "智谱" not in blob
     assert "设置智谱" not in blob
-    assert "不需要 API Key" in WELCOME_HTML
-    assert "本地 Web" in WELCOME_HTML
+    assert "无需 API Key" in WELCOME_HTML
+    assert "本地 Web" in HELP_HTML
     assert "聊天模型设置" in WELCOME_HTML
     assert "DeepSeek" in WELCOME_HTML or "OpenAI 兼容" in WELCOME_HTML
 

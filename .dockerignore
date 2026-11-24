@@ -20,3 +20,12 @@ db/*.db-shm
 db/*.db-wal
 web/**/.token
 *.log
+
+# 本地配置与个人材料：绝不进镜像
+config.json
+config.local.json
+.env
+.env.*
+resume_raw.txt
+notes_raw.txt
+张敬轩-简历*
