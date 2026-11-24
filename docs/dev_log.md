@@ -2089,3 +2089,33 @@ P0 曾诚实降级；现已由上条 P1 替代执行路径。
 | 违背初衷 | 否——只做只读复核 + 清理自己产生的临时文件 |
 | 偏离架构 | 否 |
 | 技术利弊 | 利：95% 若被追问会一击致命，改掉最划算；弊：删数字会损失一个亮点，但换成"3 张真实表可演示"更稳 |
+
+---
+
+## 2026-11-24 README 配图落地（真实生成，非示意图）
+
+**目标**：README 零图 → 补 mermaid 架构图 + 真实「改前/改后」+ 证据示例，并保证可复现。
+
+### 产出
+| 文件 | 说明 |
+|---|---|
+| `README.md` | 新增「演示」「架构一览」两节（+58 行）；mermaid 流程图 GitHub 直接渲染 |
+| `docs/images/demo_before.png` / `demo_after.png` | LibreOffice 渲染的**真实 docx**（1224×1584） |
+| `docs/images/evidence_sample.json` | 真实证据（`storage/evidence/word/` 取一条，抹掉本机绝对路径） |
+| `docs/demo/make_demo.py` | 复现脚本：造 docx → 调 `WordModule.handle` → 取证据 |
+
+### 验证
+- 脚本实跑：`status=done`、`reason=find_replace`、`applied=2`（段落 + 表格单元格各 1）。
+- 两图目视核对：改前 `A型机`、改后 `C型机`；**"甲方是" 加粗保留、"乙方是B型机" 未变**（证明 run 级编辑）。
+- `git commit 5c1b00d`：6 files, +199。
+
+### 注意
+- `.gitignore` 有 `*.docx` → demo 的 `.docx` **不入库**（由脚本生成），只有 png/json 入库。
+- **`git push` 在沙箱内失败**：`ssh.exe: couldn't create signal pipe, Win32 error 5`（沙箱禁止命名管道），非凭据问题 → **需用户在本机 push**。
+
+### 自审
+| 项 | 结论 |
+|---|---|
+| 违背初衷 | 否——用的是项目自身代码产出，未造假 |
+| 偏离架构 | 否——复现脚本放 `docs/demo/`，不污染产品代码 |
+| 技术利弊 | 利：README 有了可点开的证据；弊：图片是渲染件，Word 原生排版可能略有差异（已用 LibreOffice） |
