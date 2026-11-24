@@ -22,28 +22,38 @@ from .state import is_clean, predicates, scan
 # 决策/门/授权/审计（`_authorize`=`v4 不做`；`_audit`=双通道审计未接）
 # ---------------------------------------------------------------
 
+# 只读 op：不进写事务、不建快照（与 list_comments 同级）
+_READONLY_OPS = frozenset({
+    "inspect", "list_comments", "list_controls", "list_fields",
+})
 
 _TIER_HINTS = ("校对", "错别字", "润色", "改写", "摘要", "总结", "标记", "术语", "建议")
 
 
 def _decide_tier(text: str, state: dict, preds: dict) -> str:
-    """**决策表**（读契约 `word_office.decision_rules`）：按规则匹配 → tier。"""
+    """**决策表**（读契约 `word_office.decision_rules`）：按规则匹配 → tier。
+
+    先匹配非 default；default 最后才用。D 级关键词必须是「生成/起草…」整词，
+    禁止单字「合同」升档（防乱出报告）。
+    """
     try:
         from pipeline.synth_contract.registry import load_contract
         rules = (load_contract().data.get("word_office") or {}).get("decision_rules") or []
     except Exception:  # noqa: BLE001
         rules = []
     if not rules:
-        # 兜底：老行为
         return "B" if any(h in str(text or "") for h in _TIER_HINTS) else "A"
+    blob = str(text or "")
+    default_tier = "A"
     for r in rules:
         when = r.get("when") or {}
         if when.get("default"):
-            return str(r.get("tier") or "A")
+            default_tier = str(r.get("tier") or "A")
+            continue
         kws = when.get("any_keyword") or []
-        if kws and any(k in str(text or "") for k in kws):
+        if kws and any(k in blob for k in kws):
             return str(r.get("tier") or "A")
-    return "A"
+    return default_tier
 
 
 def _finish(result: dict, stages: list = None, tokens: dict = None,
@@ -163,17 +173,42 @@ def _inspect_msg(state: dict, preds: dict) -> str:
         "no_bookmark_in_range", "no_nested_table")
         if preds.get(k, {}).get("value") != "true"]
     return (
-        "📄 结构检查：段落 %d 个；样式 %s；表格 %s；图片 %d 张。\n"
-        "结构风险：%s"
+        "📄 结构检查：段落 %d 个；样式 %s；表格 %s；图片 %d 张；"
+        "批注 %d 条；控件 %d 个；字段 %d 个。\n"
+        "结构风险：%s\n"
+        "（批注/控件/字段可「看看批注」「看看控件」「看看字段」只读；"
+        "写批注/写控件/写字段未做）"
         % (state["paragraphs"], styles, tables, state["inline_shapes"],
+           int(state.get("comment_count") or 0),
+           int(state.get("control_count") or 0),
+           int(state.get("field_count") or 0),
            "无" if not dirty else "、".join(dirty))
     )
 
 
 _REPLACE_PATTERNS = (
+    # 优先：带引号的目标词（「A型机」），允许「这份文档里的…全部」外壳
+    re.compile(
+        r"(?:把|将)\s*(?:这份?文档里的|文档里的|文中的|全文的)?\s*"
+        r"[「「\"'](.+?)[」」\"']\s*(?:全部)?\s*"
+        r"(?:替换成|替换为|改成|改为|换成|换为)\s*[「「\"'](.+?)[」」\"']"
+    ),
     re.compile(r"(?:把|将)\s*(.+?)\s*(?:替换成|替换为|改成|改为|换成|换为)\s*(.+?)(?:[。，,；;]|$)"),
     re.compile(r"(.+?)\s*(?:替换成|替换为|改成|改为|换成|换为)\s*(.+?)(?:[。，,；;]|$)"),
 )
+
+# 自然说法外壳：不进查找串（机械剥离，不猜业务词）
+_FIND_WRAPPER_PREFIX = re.compile(
+    r"^(?:这份?文档里的|文档里的|文档中的|文中的|全文的|所有的)\s*"
+)
+_FIND_WRAPPER_SUFFIX = re.compile(r"\s*全部$")
+
+
+def _clean_replace_term(raw: str) -> str:
+    s = (raw or "").strip().strip("「」\"' ")
+    s = _FIND_WRAPPER_PREFIX.sub("", s)
+    s = _FIND_WRAPPER_SUFFIX.sub("", s)
+    return s.strip().strip("「」\"' ")
 
 
 _INSERT_PATTERNS = (
@@ -239,8 +274,8 @@ def _plan_ops(text: str) -> list:
                 continue
             op = str(rule.get("op") or "")
             if op == "find_replace" and len(m.groups()) >= 2:
-                find = m.group(1).strip().strip("「」\"' ")
-                repl = m.group(2).strip().strip("「」\"' ")
+                find = _clean_replace_term(m.group(1))
+                repl = _clean_replace_term(m.group(2))
                 if find and find != repl:
                     return [{"op": "find_replace", "find": find, "replace": repl}]
             elif op == "insert" and len(m.groups()) >= 2:
@@ -249,14 +284,36 @@ def _plan_ops(text: str) -> list:
                 if anchor and content:
                     return [{"op": "insert", "anchor": anchor, "content": content}]
             elif op == "tracked_change" and len(m.groups()) >= 2:
-                find = m.group(1).strip().strip("「」\"' ")
-                repl = m.group(2).strip().strip("「」\"' ")
+                find = _clean_replace_term(m.group(1))
+                repl = _clean_replace_term(m.group(2))
                 if find and find != repl:
                     return [{"op": "tracked_change", "find": find, "replace": repl}]
             elif op == "delete" and len(m.groups()) >= 1:
                 find = m.group(1).strip().strip("「」\"' ")
                 if find:
                     return [{"op": "delete", "find": find}]
+            elif op == "list_comments":
+                return [{"op": "list_comments"}]
+            elif op == "list_controls":
+                return [{"op": "list_controls"}]
+            elif op == "list_fields":
+                return [{"op": "list_fields"}]
+            elif op == "inspect":
+                return [{"op": "inspect"}]
+    if re.search(r"(?:看看|查看|列出|有哪些)?\s*批注", text):
+        return [{"op": "list_comments"}]
+    if re.search(
+        r"(?:看看|查看|列出|有哪些|有什么)?\s*(?:内容)?控件|"
+        r"(?:内容控件|内容控制|表单域)\s*(?:列表|有哪些|多少)",
+        text,
+    ):
+        return [{"op": "list_controls"}]
+    if re.search(
+        r"(?:看看|查看|列出|有哪些|有什么)?\s*(?:字段|域|交叉引用)|"
+        r"(?:交叉引用|字段|域)\s*(?:列表|有哪些|多少)",
+        text,
+    ):
+        return [{"op": "list_fields"}]
     for pat in _INSERT_PATTERNS:
         m = pat.search(text)
         if m:
@@ -346,8 +403,8 @@ def _plan_ops(text: str) -> list:
     for pat in _REPLACE_PATTERNS:
         m = pat.search(text)
         if m:
-            find = m.group(1).strip().strip("「」\"' ")
-            repl = m.group(2).strip().strip("「」\"' ")
+            find = _clean_replace_term(m.group(1))
+            repl = _clean_replace_term(m.group(2))
             if find and find != repl:
                 return [{"op": "find_replace", "find": find, "replace": repl}]
     return [{"op": "inspect"}]
@@ -370,6 +427,28 @@ class WordModule:
         docxs = [p for p in selected if p.lower().endswith(".docx")]
         if not docxs:
             return _finish(_fail("no_docx", "请先在文件管理器里选中一个 .docx 文件，我才能处理。"))
+        if len(docxs) > 1:
+            # 多份候选：指令点名唯一文件就用它；否则写操作必须追问，不能默认第一份
+            named = [p for p in docxs
+                     if Path(p).name in text or Path(p).stem in text]
+            if len(named) == 1:
+                docxs = named
+            else:
+                writes = any(
+                    str(o.get("op") or "") not in _READONLY_OPS
+                    for o in _plan_ops(text))
+                if writes:
+                    names = "、".join(Path(p).name for p in docxs[:8])
+                    return _finish({
+                        "status": "needs_confirmation",
+                        "reason": "multiple_candidates",
+                        "message": (
+                            "你选中了 %d 份 Word（%s），我不确定要改哪一份。"
+                            "请只保留一份附件，或在指令里写明文件名。"
+                            % (len(docxs), names)),
+                        "user_actions": [],
+                        "plan_ref": None, "audit_ref": None,
+                    })
         target = Path(docxs[0])
         if not target.is_file():
             return _finish(_fail("not_found", "选中的文件不存在：%s" % target.name))
@@ -403,8 +482,15 @@ class WordModule:
         except Exception:  # noqa: BLE001
             pass
         preds = predicates(state)
-        tier = _decide_tier(text, state, preds)
-        if not is_clean(preds) and tier == "A":
+        # 测试/批处理可传 tier_override；正式口令仍走决策表（D 关键词很严）
+        override = str(request.get("tier_override") or "").strip().upper()
+        tier = override if override in ("A", "B", "C", "D", "E") else _decide_tier(
+            text, state, preds)
+        # 先定 plan：结构风险闸门只挡**写**；inspect/list_* 正是为了看见风险
+        planned = [{"op": "l1"}] if tier == "B" else _plan_ops(text)
+        will_write = any(
+            str(o.get("op") or "") not in _READONLY_OPS for o in planned)
+        if will_write and not is_clean(preds) and tier == "A":
             dirty = [k for k in (
                 "no_revision_in_target", "no_content_control", "no_field_in_range",
                 "no_bookmark_in_range", "no_nested_table")
@@ -413,8 +499,7 @@ class WordModule:
                 "needs_confirmation",
                 "这份文档有结构风险（%s），A 级不静默执行。" % "、".join(dirty)), stages)
 
-        plan = {"tier": tier,
-                "operations": [{"op": "l1"}] if tier == "B" else _plan_ops(text)}
+        plan = {"tier": tier, "operations": planned}
         plan = _apply_overlay(plan)
 
         # 置信度：**fallback 到 inspect 且用户没说"检查/结构" → 低置信**
@@ -460,55 +545,73 @@ class WordModule:
             return _finish(_fail("preflight", str(pre2.get("reason") or "")),
                            stages, warnings=warnings)
 
-        # **独立备份**：复制到 storage/backups/word/（不依赖 .bak）
-        bak2 = None
-        try:
-            from pathlib import Path as _P
-            bkroot = _P(__file__).resolve().parents[2] / "storage" / "backups" / "word"
-            bkroot.mkdir(parents=True, exist_ok=True)
-            bak2 = bkroot / ("%s_%s" % (time.strftime("%Y%m%d-%H%M%S"), work.name))
-            shutil.copy2(work, bak2)
-            # **保留 N 份**（按 mtime 只留最近 20 份/每文件）
-            groups: dict = {}
-            for f in bkroot.iterdir():
-                if not f.is_file():
-                    continue
-                key = f.name.split("_", 1)[-1]
-                groups.setdefault(key, []).append(f)
-            for key, files in groups.items():
-                files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-                for old in files[20:]:
-                    try:
-                        old.unlink()
-                    except OSError:
-                        pass
-        except Exception:  # noqa: BLE001
-            bak2 = None
-
-        if tier == "B":
-            related = []
+        # 写事务：inspect / 真 dry-run 不碰原文件，不建快照
+        from .txn import Snapshot, begin as txn_begin, try_restore
+        snap: Snapshot | None = None
+        writes = any(
+            str(o.get("op") or "") not in _READONLY_OPS
+            for o in (plan.get("operations") or []))
+        if writes and not dry:
             try:
-                from .memory import get_file_memory, recall
-                from .state import file_sha256
-                self_mem = get_file_memory(file_sha256(target))
-                if self_mem:
-                    related.append(self_mem)
-                related.extend(recall(text))
-            except Exception:  # noqa: BLE001
-                pass
-            result = _exec_l1(work, state, preds, text, related=related)
-            if related:
-                result.setdefault("memory", related)
-        else:
-            result = _execute(work, state, preds, plan)
-        # PatchSet：这次改了哪些 + 备份 + 生效数（**真实 applied**）
+                snap = txn_begin(work)
+            except Exception as exc:  # noqa: BLE001
+                return _finish(_fail("pre_check", "无法写前备份，已拒绝执行：%s" % exc),
+                               stages, warnings=warnings)
+
+        try:
+            if tier == "B":
+                related = []
+                try:
+                    from .memory import get_file_memory, recall
+                    from .state import file_sha256
+                    self_mem = get_file_memory(file_sha256(target))
+                    if self_mem:
+                        related.append(self_mem)
+                    related.extend(recall(text))
+                except Exception:  # noqa: BLE001
+                    pass
+                result = _exec_l1(work, state, preds, text, related=related)
+                if related:
+                    result.setdefault("memory", related)
+            else:
+                result = _execute(work, state, preds, plan)
+        except Exception as exc:  # noqa: BLE001
+            result = _fail("failed", "执行异常，将还原快照：%s" % exc)
+        ok_status = str(result.get("status") or "") in ("done", "needs_confirmation")
+        if snap is not None and (not ok_status or request.get("rollback")):
+            restored, err = try_restore(snap)
+            if not restored:
+                result = _fail(
+                    "rollback_failed",
+                    "写入失败且还原快照失败（%s）。原文件可能不一致，请从 storage/backups/word 手工恢复。"
+                    % (err or result.get("message") or ""),
+                )
+            elif request.get("rollback"):
+                result["rollback"] = True
+                result["applied"] = 0
+                result.setdefault("txn", {})["phase"] = "aborted"
+            else:
+                result.setdefault("txn", {})["phase"] = "aborted"
+                # not_found 等未写入失败也走还原（无害）；文案只在校验/异常路径补一句
+                if result.get("reason") in ("verify_failed", "failed"):
+                    msg = str(result.get("message") or "")
+                    if "已恢复" not in msg and "已还原" not in msg:
+                        result["message"] = (msg + "（已从快照整包还原）").strip()
+        elif dry:
+            result["dry_run"] = True
+            result["applied"] = 0
+            result.setdefault("txn", {})["phase"] = "dry"
+        elif snap is not None:
+            result.setdefault("txn", {})["phase"] = "committed"
+        # PatchSet：这次改了哪些 + 快照路径 + 生效数
         try:
             from .objects import PatchSet
+            bak_path = str(snap.archive) if snap is not None else (str(target) + ".bak")
             ps = PatchSet(ops=list(plan.get("operations") or []),
-                          backup_path=str(target) + ".bak",
+                          backup_path=bak_path,
                           applied=int(result.get("applied") or 0))
             result["patch_set"] = {"ops": ps.ops, "backup": ps.backup_path,
-                                   "applied": ps.applied}
+                                   "applied": ps.applied, "path": str(target)}
         except Exception:  # noqa: BLE001
             pass
         _audit({"path": str(target), "tier": tier, "ops": len(plan["operations"]),
@@ -548,22 +651,29 @@ class WordModule:
                       "user_input": text, "status": result.get("status")})
         except Exception:  # noqa: BLE001
             pass
-        # dry-run / 回滚：**独立处理**
-        if request.get("rollback"):
-            bak = target.with_suffix(target.suffix + ".bak")
-            if bak.exists():
-                shutil.copy2(bak, target)
-            elif bak2 is not None and bak2.exists():
-                shutil.copy2(bak2, target)
-            else:
-                return _finish(_fail("rollback_failed", "没有备份（.bak 与独立备份都没有），无法回滚。"),
-                               stages, warnings=warnings)
-            result["rollback"] = True
-            result["applied"] = 0
-        elif request.get("dry_run"):
-            result["dry_run"] = True
-            result["applied"] = 0
-        # 真 dry-run：删临时副本
+        # D/E Report：严闸门；失败只警告，不推翻写回
+        try:
+            from .report import emit_report, should_emit_report
+            if should_emit_report(
+                    tier=tier, result=result, plan=plan, request=request):
+                path = emit_report(
+                    target=target, user_input=text, tier=tier,
+                    plan=plan, result=result, stages=stages,
+                    warnings=warnings)
+                if path:
+                    result["report_path"] = path
+                    result.setdefault("report_paths", []).append(path)
+                    msg = str(result.get("message") or "")
+                    note = "\n📄 已生成 D/E 编辑报告：%s" % Path(path).name
+                    result["message"] = (msg + note).strip()
+                else:
+                    warnings.append("report_failed")
+            elif str(tier) in ("D", "E") and str(result.get("status")) == "done":
+                # 显式记录「本该是 D/E 但闸门未放行」，便于自审，不生成文件
+                result["report_skipped"] = True
+        except Exception:  # noqa: BLE001
+            warnings.append("report_error")
+        # 真 dry-run：删临时副本（原文件未打开写入）
         if tmp is not None:
             try:
                 tmp.unlink(missing_ok=True)
@@ -711,13 +821,18 @@ def _count_all(path: Path, needle: str) -> int:
     return n
 
 
-def _execute(target: Path, state: dict, preds: dict, plan: dict) -> dict:
-    op = (plan["operations"] or [{"op": "inspect"}])[0]
+def _dispatch_op(target: Path, state: dict, preds: dict, op: dict) -> dict:
+    """单个 op。失败由 handle 的快照整包还原，这里仍可本地 .bak（双保险）。"""
     if op["op"] == "inspect":
         return {"status": "done", "reason": "inspect",
                 "message": _inspect_msg(state, preds),
                 "plan_ref": None, "audit_ref": None, "user_actions": []}
-    # ToolRegistry 分派（新增 op 只改 objects.ToolRegistry，不改这里）
+    if op["op"] == "list_comments":
+        return _exec_list_comments(target, op)
+    if op["op"] == "list_controls":
+        return _exec_list_controls(target, op)
+    if op["op"] == "list_fields":
+        return _exec_list_fields(target, op)
     from .objects import ToolRegistry
     import sys as _sys
     name = ToolRegistry().tools.get(str(op["op"]))
@@ -750,6 +865,108 @@ def _execute(target: Path, state: dict, preds: dict, plan: dict) -> dict:
             "message": "✅ 已替换 %d 处「%s」→「%s」%s（写前备份：%s）。"
                        % (n_run + n_para, find, repl, note, backup.name),
             "applied": n_run + n_para,
+            "plan_ref": None, "audit_ref": None, "user_actions": []}
+
+
+def _execute(target: Path, state: dict, preds: dict, plan: dict) -> dict:
+    ops = list(plan.get("operations") or [{"op": "inspect"}])
+    write_ops = [o for o in ops
+                 if str(o.get("op") or "") not in _READONLY_OPS]
+    if not write_ops:
+        return _dispatch_op(target, state, preds, ops[0] if ops else {"op": "inspect"})
+    last = None
+    applied = 0
+    messages = []
+    for op in write_ops:
+        last = _dispatch_op(target, state, preds, op)
+        if str(last.get("status") or "") != "done":
+            return last
+        applied += int(last.get("applied") or 0)
+        if last.get("message"):
+            messages.append(str(last["message"]))
+    last["applied"] = applied
+    if len(messages) > 1:
+        last["message"] = "\n".join(messages)
+    return last
+
+
+def _exec_list_comments(target: Path, op: dict) -> dict:
+    """只读批注列表。不写文件、不进事务。"""
+    from .state import list_comments
+
+    items = list_comments(target, limit=int(op.get("limit") or 50))
+    if not items:
+        return {"status": "done", "reason": "list_comments",
+                "message": "这份文档没有批注（或当前库读不出批注）。写批注尚未实现。",
+                "comments": [], "applied": 0,
+                "plan_ref": None, "audit_ref": None, "user_actions": []}
+    lines = ["📄 批注 %d 条（只读，最多列 50）：" % len(items), ""]
+    for i, c in enumerate(items, 1):
+        author = c.get("author") or "（匿名）"
+        body = (c.get("text") or "").replace("\n", " ")[:200]
+        lines.append("%d. [%s] %s" % (i, author, body or "（空）"))
+    lines.append("")
+    lines.append("写批注未做；控件/字段可「看看控件」「看看字段」只读。")
+    return {"status": "done", "reason": "list_comments",
+            "message": "\n".join(lines), "comments": items, "applied": 0,
+            "plan_ref": None, "audit_ref": None, "user_actions": []}
+
+
+def _exec_list_controls(target: Path, op: dict) -> dict:
+    """只读内容控件列表。不写文件、不进事务。"""
+    from .state import list_controls
+
+    items = list_controls(target, limit=int(op.get("limit") or 50))
+    if not items:
+        return {"status": "done", "reason": "list_controls",
+                "message": "这份文档没有内容控件（或正文里读不出）。写控件尚未实现。",
+                "controls": [], "applied": 0,
+                "plan_ref": None, "audit_ref": None, "user_actions": []}
+    lines = ["📄 内容控件 %d 个（只读正文，最多列 50）：" % len(items), ""]
+    for i, c in enumerate(items, 1):
+        title = (c.get("alias") or c.get("tag") or "（未命名）").strip()
+        ctype = c.get("type") or "richText"
+        body = (c.get("text") or "").replace("\n", " ")[:200]
+        tag = (c.get("tag") or "").strip()
+        extra = (" tag=%s" % tag) if tag and tag != title else ""
+        lines.append("%d. [%s/%s%s] %s" % (i, title, ctype, extra, body or "（空）"))
+    lines.append("")
+    lines.append("写控件未做；字段/交叉引用可「看看字段」；页眉页脚控件本轮不扫。")
+    return {"status": "done", "reason": "list_controls",
+            "message": "\n".join(lines), "controls": items, "applied": 0,
+            "plan_ref": None, "audit_ref": None, "user_actions": []}
+
+
+def _exec_list_fields(target: Path, op: dict) -> dict:
+    """只读域/交叉引用列表。不写文件、不更新域结果。"""
+    from .state import list_fields
+
+    items = list_fields(target, limit=int(op.get("limit") or 50))
+    if not items:
+        return {"status": "done", "reason": "list_fields",
+                "message": "这份文档没有字段/域（或正文里读不出）。写字段尚未实现。",
+                "fields": [], "applied": 0,
+                "plan_ref": None, "audit_ref": None, "user_actions": []}
+    xref = sum(1 for f in items if str(f.get("kind") or "").upper() in (
+        "REF", "PAGEREF", "NOTEREF", "STYLEREF"))
+    lines = [
+        "📄 字段/域 %d 个（只读正文，最多列 50；其中交叉引用类 %d）："
+        % (len(items), xref),
+        "",
+    ]
+    for i, f in enumerate(items, 1):
+        kind = f.get("kind") or "unknown"
+        instr = (f.get("instr") or "").replace("\n", " ")[:120]
+        body = (f.get("text") or "").replace("\n", " ")[:120]
+        form = f.get("form") or ""
+        lines.append(
+            "%d. [%s/%s] %s → %s"
+            % (i, kind, form, instr or "（无指令）", body or "（空结果）")
+        )
+    lines.append("")
+    lines.append("写字段 / 更新域结果未做；页眉页脚里的域本轮不扫。")
+    return {"status": "done", "reason": "list_fields",
+            "message": "\n".join(lines), "fields": items, "applied": 0,
             "plan_ref": None, "audit_ref": None, "user_actions": []}
 
 

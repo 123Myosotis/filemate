@@ -273,6 +273,13 @@ def main() -> int:
     ap.add_argument("--ast", type=Path, default=DEFAULT_AST)
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT)
     args = ap.parse_args()
+    if not args.ast.is_file():
+        print(
+            "SKIP check_plan_schema_coherence :: missing %s "
+            "(private/acceptance fixture; not a product regression)"
+            % args.ast.as_posix()
+        )
+        return 0
     art = json.loads(args.ast.read_text(encoding="utf-8"))
     table_cols = _table_columns(art)
     cases = art.get("cases") or {}

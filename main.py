@@ -29,7 +29,7 @@ def _fail(msg: str) -> None:
             ctypes.windll.user32.MessageBoxW(
                 0,
                 "缺少依赖，请先在项目目录执行：\n"
-                "py -3 -m pip install -r 库列表.txt\n\n"
+                "py -3 -m pip install -r requirements.txt\n\n"
                 f"详情已写入：{err_path}",
                 "FileMate 启动失败",
                 0x10,
@@ -48,11 +48,11 @@ except Exception:
     _fail(
         "无法导入运行依赖。\n\n"
         "请在项目根目录打开终端，执行：\n"
-        "  py -3 -m pip install -r 库列表.txt\n"
+        "  py -3 -m pip install -r requirements.txt\n"
         "或：\n"
-        "  python -m pip install -r 库列表.txt\n\n"
-        "说明：双击 .py 默认走系统的 py 启动器（当前多为 Python 3.13），\n"
-        "依赖必须装到该解释器上；另外 .py 若被关联到 PyCharm，请改用「启动FileMate.bat」。"
+        "  python -m pip install -r requirements.txt\n\n"
+        "说明：双击 .py 默认走系统的 py 启动器，\n"
+        "依赖必须装到该解释器上；另外 .py 若被关联到 IDE，请改用「启动FileMate.bat」。"
     )
 
 

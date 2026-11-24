@@ -84,6 +84,13 @@ def ensure_contract_library(contract_dir: Optional[str] = None) -> ContractVersi
         raise ContractLibraryError("contract missing contract_version field")
     if not isinstance(cv.data.get("word_office"), dict):
         raise ContractLibraryError("contract missing word_office section")
+    fo = cv.data.get("file_organize")
+    if not isinstance(fo, dict):
+        raise ContractLibraryError("contract missing file_organize section")
+    if not isinstance(fo.get("intent_rules"), list):
+        raise ContractLibraryError("file_organize.intent_rules missing")
+    if not isinstance(fo.get("veto_patterns"), list):
+        raise ContractLibraryError("file_organize.veto_patterns missing")
 
     _BOOT_CV = cv
     _BOOT_DONE = True

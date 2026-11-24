@@ -37,6 +37,14 @@ class FileRuleEngine:
             if target_dir:  # 有规则命中才执行移动；没有命中则保持原样
                 try:
                     dst = target_dir / f.name  # 目标完整路径 = 目标目录 / 原文件名
+                    if dst.exists():
+                        i = 1
+                        while True:
+                            cand = dst.with_name(f"{dst.stem}_{i}{dst.suffix}")
+                            if not cand.exists():
+                                dst = cand
+                                break
+                            i += 1
                     if not dry_run:  # 预览模式跳过一切真实文件操作
                         target_dir.mkdir(parents=True, exist_ok=True)  # 目标目录不存在则递归创建
                         shutil.move(str(f), str(dst))  # 真正执行移动

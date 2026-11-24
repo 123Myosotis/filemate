@@ -17,11 +17,11 @@
 
 ### Word
 
-- **6 种 op**（全 **run 级**）：
-  - `replace`（替换）、`insert`（插入）、`delete`（删除）、`format`（粗体/斜体/字号/字体）、`move`（移动）、`tracked_change`（修订痕迹）。
-- **格式保留**：拆 run + 复制 `w:rPr`（前后文格式不丢）。
-- **危险操作确认**：`delete` 走 `needs_confirmation`。
-- **记忆**：文件主题 + 术语 + 术语↔锚点 + 生命周期 + 混合召回（FTS5 + LIKE + 向量）。
+- **写 op**（run/结构级）：`replace` / `insert` / `delete` / `format` / `move` / `tracked_change`，另有 `outline` 与表↔叙述/大纲跨结构。
+- **只读**：结构检查、批注/控件/字段列表（无 Key 可走；交叉引用多为 REF/PAGEREF）；书签目前仅有无检测。
+- **写前快照**：失败整包还原（事务最小版；非企业级 v4）。
+- **危险操作确认**：`delete` / 修订类走确认。
+- **记忆**：文件主题 + 术语 + 术语↔锚点 + 生命周期 + 混合召回（FTS5 + LIKE + 向量）；与 Excel 记忆**分开**（有意）。
 
 ### 记忆（"小脑"）
 
@@ -42,9 +42,11 @@
 pip install -r requirements.txt
 ```
 
+A 级整理（按类型 / 合同归档 / 按日期）**不需要 Key**。查表、改 Word、内容整理才要聊天模型。
+
 ## 配置
 
-**推荐：启动后在「设置」里填**，会写入本地 `config.json`（已被 `.gitignore` 忽略）。
+**推荐：启动后「设置 → 聊天模型设置」**（OpenAI 兼容，如 DeepSeek），写入本地 `config.json`（已被 `.gitignore` 忽略）。记忆纠错 / 跨表查询 Web 走 **「设置 → 本地 Web」**，不必自己找端口。
 
 | 用途 | 配置项 | 说明 |
 |---|---|---|
@@ -64,6 +66,34 @@ pip install -r requirements.txt
 
 > - **向量可选**：`api.embedding_key` 空 → 召回自动退化为 **FTS5 + LIKE**（不报错）。
 > - 旧字段 `zhipu_api_key` 仍兼容（聊天 Key 的旧名）。
+
+## 数据库：SQLite / MySQL
+
+默认 SQLite（`db/filemate.db`，零配置）。业务表（`channels` / `messages` / `logs`）可切 MySQL：
+
+```bash
+pip install PyMySQL
+export FILEMATE_DB_BACKEND=mysql FILEMATE_DB_HOST=127.0.0.1 \
+       FILEMATE_DB_USER=root FILEMATE_DB_PASSWORD=*** FILEMATE_DB_NAME=filemate
+
+python scripts/mysql_init.py                                  # 建库建表
+python scripts/mysql_init.py --migrate-sqlite db/filemate.db  # 从 SQLite 导数据
+```
+
+- 配置也可写在 `config.json`：`db.backend` / `db.mysql.host` / `db.mysql.port` / `db.mysql.user` / `db.mysql.password` / `db.mysql.database`。
+- 记忆库仍用 SQLite（依赖 FTS5 / `sqlite-vec`），**只有业务库支持 MySQL**，这是有意的边界。
+
+## Docker（本地 Web 服务 + MySQL）
+
+桌面 GUI 跑在容器里没有意义，镜像只跑本地 Web 服务，并附带一个 MySQL：
+
+```bash
+docker compose up --build
+# Web:   http://127.0.0.1:8770/healthz
+# MySQL: 127.0.0.1:3307（容器内 3306）
+```
+
+`docker-compose.yml` 里的密码仅用于本地开发；容器启动时会自动等 MySQL 就绪并建表。
 
 ## 运行
 
@@ -102,10 +132,11 @@ pytest tests/ -q
 |---|---|
 | `docs/architecture.md` | 架构（A–E + op 两维度；记忆；复用原则） |
 | `docs/specs/word_office_spec.md` | Word 接入设计（**权威规格**） |
-| `docs/spec_status.md` | 规格落地状态（6/6 op） |
+| `docs/spec_status.md` | 规格落地状态（写 op + 跨结构 + 批注只读） |
 | `docs/optimizations.md` | 可优化 + 技术弊端（backlog） |
 
 ## 说明
 
-- 本仓库**只含源码**：真实业务表、验收证据、内部设计文档**未上传**。
+- 本仓库**只含产品源码与权威文档（`docs/`）**：私有表、本地 `acceptance/`、草稿旁路**不入库**（见 `.gitignore`）。
 - **不改原文件**：Word/Excel 操作**写前备份**，失败**回滚**。
+- 依赖唯一清单：`requirements.txt`（勿再在根目录放爬虫/草稿目录）。

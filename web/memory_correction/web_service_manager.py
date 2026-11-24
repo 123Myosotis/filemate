@@ -438,6 +438,7 @@ class WebServiceManager:
 
 
 _SHARED: WebServiceManager | None = None
+_QUERY: WebServiceManager | None = None
 
 
 def get_shared_manager(project_root: Path | None = None) -> WebServiceManager:
@@ -447,11 +448,28 @@ def get_shared_manager(project_root: Path | None = None) -> WebServiceManager:
     return _SHARED
 
 
+def get_query_ui_manager(project_root: Path | None = None) -> WebServiceManager:
+    """Reuse the same subprocess manager; different app / log. Loopback only."""
+    global _QUERY
+    if _QUERY is None:
+        root = Path(
+            project_root if project_root is not None else default_project_root()
+        ).resolve()
+        _QUERY = WebServiceManager(
+            project_root=root,
+            app_import="query_ui.app:app",
+            log_path=root / "web" / "query_ui" / "logs" / LOG_FILE_NAME,
+        )
+    return _QUERY
+
+
 def reset_shared_manager_for_tests() -> None:
-    global _SHARED
-    if _SHARED is not None:
-        try:
-            _SHARED.stop()
-        except Exception:
-            pass
+    global _SHARED, _QUERY
+    for mgr in (_SHARED, _QUERY):
+        if mgr is not None:
+            try:
+                mgr.stop()
+            except Exception:
+                pass
     _SHARED = None
+    _QUERY = None

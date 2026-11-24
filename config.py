@@ -62,6 +62,8 @@ def set_param(key: str, value):
 PARAM_DEFAULTS = {
     # ---- Word 编辑（A–E 任务级；预算单位 token） ----
     "word_office.budget": {"A": 0, "B": 2000, "C": 8000, "D": 32000, "E": 4000},
+    # ---- 内容标签（本地库；关掉后分类行为与无标签时一致） ----
+    "tags.enabled": True,
     # ---- API 客户端（智谱 OpenAI 兼容：base 配到 v4，客户端自动拼 /chat/completions） ----
     "api.base_url": "https://open.bigmodel.cn/api/paas/v4",
     "api.model": "glm-4-flash",
@@ -123,6 +125,7 @@ PARAM_DEFAULTS = {
     "cross_table.proposal_max_calls_per_kind": None,
     # ---- 记忆纠错 Web（M4；仅设置端口；启停不在 GUI） ----
     "memory_correction.port": 8765,
+    "query_ui.port": 8770,
     # ---- M5-CPU-Merge / M5.2（不合并 CURRENT；双引擎自学习） ----
     "memory_rag.maibot_data_dir": "",
     "memory_rag.self_learning_engine": "chat",

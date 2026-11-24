@@ -1092,20 +1092,71 @@ def _exec_arg_extremum(inp: dict[str, Any], args: Mapping[str, Any]) -> dict[str
     return _table(out, list(inp.get("columns") or []))
 
 
+def _normalize_sort_args(args: Mapping[str, Any]) -> dict[str, Any]:
+    """把 AI 常见的 sort / order_by 收成 sort_column_id + direction（机械，不猜业务列）。"""
+    out = dict(args or {})
+    scol = str(out.get("sort_column_id") or "").strip()
+    if scol:
+        return out
+    raw = out.get("sort")
+    if raw is None:
+        raw = out.get("order_by")
+    if raw is None:
+        # 模型偶发用 Python 风格 / 别名字段；只认“列+方向”结构，不猜业务列
+        for alias in ("sort_keys", "sort_by", "order_keys", "ranking"):
+            raw = out.get(alias)
+            if raw is not None:
+                break
+    if isinstance(raw, str) and raw.strip():
+        parts = raw.strip().split()
+        out["sort_column_id"] = parts[0]
+        if len(parts) >= 2 and not str(out.get("direction") or "").strip():
+            d = parts[1].lower().strip(",")
+            if d in ("asc", "desc", "ascending", "descending"):
+                out["direction"] = "asc" if d.startswith("asc") else "desc"
+    elif isinstance(raw, dict):
+        out["sort_column_id"] = str(
+            raw.get("column_id") or raw.get("column") or raw.get("field") or ""
+        ).strip()
+        if raw.get("direction") and not str(out.get("direction") or "").strip():
+            out["direction"] = str(raw.get("direction"))
+    elif isinstance(raw, list) and raw:
+        first = raw[0]
+        if isinstance(first, str):
+            out["sort_column_id"] = first.strip()
+        elif isinstance(first, dict):
+            out["sort_column_id"] = str(
+                first.get("column_id") or first.get("column") or ""
+            ).strip()
+            if first.get("direction") and not str(out.get("direction") or "").strip():
+                out["direction"] = str(first.get("direction"))
+    return out
+
+
 def _exec_sort_truncate(inp: dict[str, Any], args: Mapping[str, Any]) -> dict[str, Any]:
     if args.get("claims_group_latest") or args.get("as_group_latest"):
         raise QueryEngineError(
             "sort_truncate cannot express group_latest",
             fail_locus=FAIL_LOCUS_GROUP_LATEST,
         )
-    scol = str(args.get("sort_column_id") or "")
+    args = _normalize_sort_args(args)
+    scol = str(args.get("sort_column_id") or "").strip()
+    cols = list(inp.get("columns") or [])
+    # fail closed：无有效排序列则报错（供上层重试），不静默按空键排序
+    if not scol or (cols and scol not in cols):
+        raise QueryEngineError(
+            "sort_truncate needs valid sort_column_id "
+            "(got %r; columns=%s)" % (scol or None, cols[:12]),
+            fail_locus=FAIL_LOCUS_OTHER,
+            subreason="sort_column_missing",
+        )
     direction = str(args.get("direction") or "desc")
     limit = int(args.get("limit") or 0)
     rows = [dict(r) for r in (inp.get("rows") or [])]
     rows.sort(key=lambda r: _sortable_cell(r.get(scol)), reverse=(direction != "asc"))
     if limit > 0:
         rows = rows[:limit]
-    return _table(rows, list(inp.get("columns") or []))
+    return _table(rows, cols)
 
 
 def _exec_aggregate(inp: dict[str, Any], args: Mapping[str, Any]) -> dict[str, Any]:
@@ -1355,7 +1406,8 @@ def execute_query_plan(
             elif op_id == "op_arg_extremum":
                 result = _exec_arg_extremum(resolved[0], args)
             elif op_id == SORT_TRUNCATE_OP_ID:
-                result = _exec_sort_truncate(resolved[0], args)
+                result = _exec_sort_truncate(
+                    resolved[0], _normalize_sort_args(args))
             elif op_id == "op_aggregate":
                 result = _exec_aggregate(resolved[0], args)
             else:

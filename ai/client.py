@@ -448,11 +448,12 @@ def test_connectivity(api_key: str = None) -> dict:
     import time
     key = api_key if api_key is not None else config.get_api_key()
     if not key:
-        return {"ok": False, "message": "未配置智谱 API Key", "latency_ms": 0}
+        return {"ok": False, "message": "未配置聊天模型 API Key", "latency_ms": 0}
     hint = ""
-    if "." not in key and len(key) <= 40:
-        hint = ("\n提示：智谱完整 Key 通常形如 id.secret（中间有点）。"
-                "若只有一段十六进制，请到开放平台复制完整 Key。")
+    url_preview = resolve_chat_url()
+    if "bigmodel" in url_preview and "." not in key and len(key) <= 40:
+        hint = ("\n提示：当前 Base URL 像智谱 GLM，完整 Key 通常形如 id.secret（中间有点）。"
+                "其它厂商（如 DeepSeek）按各自控制台复制即可。")
     t0 = time.time()
     url = resolve_chat_url()
     try:
@@ -468,7 +469,7 @@ def test_connectivity(api_key: str = None) -> dict:
         model = data.get("model") or config.get_param("api.model")
         return {
             "ok": True,
-            "message": f"智谱连通成功\nURL: {url}\n模型: {model}\n耗时: {ms}ms\n回复: {content[:80]}",
+            "message": f"聊天模型连通成功\nURL: {url}\n模型: {model}\n耗时: {ms}ms\n回复: {content[:80]}",
             "latency_ms": ms,
         }
     except RequestException as e:
@@ -481,13 +482,13 @@ def test_connectivity(api_key: str = None) -> dict:
                 pass
         return {
             "ok": False,
-            "message": f"智谱连通失败（{ms}ms）\nURL: {url}\n模型: {config.get_param('api.model')}\n详情: {detail}{hint}",
+            "message": f"聊天模型连通失败（{ms}ms）\nURL: {url}\n模型: {config.get_param('api.model')}\n详情: {detail}{hint}",
             "latency_ms": ms,
         }
     except Exception as e:
         ms = int((time.time() - t0) * 1000)
         return {
             "ok": False,
-            "message": f"智谱连通失败（{ms}ms）\nURL: {url}\n详情: {e}{hint}",
+            "message": f"聊天模型连通失败（{ms}ms）\nURL: {url}\n详情: {e}{hint}",
             "latency_ms": ms,
         }

@@ -599,6 +599,56 @@ def check_plan_ready_condition_trees(plan: Mapping[str, Any]) -> None:
             )
 
 
+def _join_has_equi_keys(args: Mapping[str, Any]) -> bool:
+    lk = str(
+        args.get("left_key") or args.get("left_on") or args.get("on") or ""
+    ).strip()
+    rk = str(
+        args.get("right_key") or args.get("right_on") or args.get("on") or ""
+    ).strip()
+    if args.get("key"):
+        return True
+    return bool(lk and rk)
+
+
+def _join_mode_skips_keys(args: Mapping[str, Any]) -> bool:
+    mode = str(args.get("mode") or args.get("set_op") or "inner").lower()
+    return mode in ("union", "union_all", "concat", "or")
+
+
+def check_plan_ready_join_keys(plan: Mapping[str, Any]) -> None:
+    """
+    plan_ready: each op_join (non-union) must have left_key/right_key (or key/on).
+
+    QE `_exec_join` 只认等值键，不认 condition_tree 当 join 键；故 QP 必须拦下
+    「condition_tree_id=null + 无 left/right_key」的计划，带 fail_locus=join_key 重试。
+    Raises QueryEngineError(fail_locus=join_key).
+    """
+    if plan.get("status") == "needs_user":
+        return
+    steps = plan.get("steps")
+    if not isinstance(steps, list):
+        return
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        op = str(step.get("op") or "")
+        if op not in ("op_join", "join"):
+            continue
+        args = step.get("args") if isinstance(step.get("args"), dict) else {}
+        if _join_mode_skips_keys(args):
+            continue
+        if _join_has_equi_keys(args):
+            continue
+        raise QueryEngineError(
+            "op_join missing left_key/right_key (or key); "
+            "condition_tree alone is not enough for equi-join; step=%s"
+            % (step.get("step_id") or step.get("output") or "?"),
+            fail_locus="join_key",
+            subreason="join_keys_missing",
+        )
+
+
 def annotate_projection_provenance_weak(plan: dict[str, Any]) -> bool:
     """
     Structural-only: mark projection column provenance.weak when ungrounded.
@@ -1085,6 +1135,7 @@ def qp_call_ai(
             }
         try:
             check_plan_ready_condition_trees(plan)
+            check_plan_ready_join_keys(plan)
             check_plan_ready_no_blank_attr_literals(plan)
             check_plan_ready_projection_columns(plan, tables_by_id)
             if slice_constraints:
@@ -1139,6 +1190,10 @@ def qp_call_ai(
                 + " | If condition_tree_id is dangling: put the tree under "
                 "condition_trees or use inline conditions; else status=needs_user "
                 "fail_locus=predicate with five non-empty fields. "
+                "If op_join lacks left_key/right_key (or key) and has null "
+                "condition_tree_id with empty conditions: set real join keys "
+                "from column_details/samples, or status=needs_user "
+                "fail_locus=join_key with five Chinese fields. "
                 "If columns cannot be determined: status=needs_user "
                 "fail_locus=projection with five non-empty fields "
                 "(speculation,evidence,what_might_be_wrong,next_step,"

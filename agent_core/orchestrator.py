@@ -148,7 +148,7 @@ def handle_content_intent(user_input: str, target_dir, progress=None, selected_f
     for p in report_paths:
         lines.append(f"📄 报告已生成：{p}")
     if not api_key:
-        lines.append("ℹ️ 未配置智谱 API Key，本次为降级摘要模式；在「设置」里配好 Key 可获得完整实体/事实抽取。")
+        lines.append("ℹ️ 未配置聊天模型 API Key，本次为降级摘要模式；在「设置 → 聊天模型设置」配好 Key 可获得完整实体/事实抽取。")
     lines.append("（数据已存入本地知识库，重复整理同一文件会自动命中缓存）")
     return "\n".join(lines)
 

@@ -1,0 +1,46 @@
+# FileMate 本地 Web 服务 + MySQL（仅本地开发用，密码勿用于生产）
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: root_pw
+      MYSQL_DATABASE: filemate
+      MYSQL_USER: filemate
+      MYSQL_PASSWORD: filemate_pw
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-time-zone=+08:00
+    ports:
+      - "3307:3306"          # 宿主机 3307，避免和本机 MySQL 冲突
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build: .
+    environment:
+      FILEMATE_DB_BACKEND: mysql
+      FILEMATE_DB_HOST: mysql
+      FILEMATE_DB_PORT: "3306"
+      FILEMATE_DB_NAME: filemate
+      FILEMATE_DB_USER: filemate
+      FILEMATE_DB_PASSWORD: filemate_pw
+      TZ: Asia/Shanghai
+    ports:
+      - "8770:8770"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    command:
+      - sh
+      - -c
+      - python scripts/mysql_init.py --wait 60 && uvicorn web.query_ui.app:app --host 0.0.0.0 --port 8770
+
+volumes:
+  mysql_data:

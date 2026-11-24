@@ -11,7 +11,8 @@ AI 全权代理调度器（对话链路唯一入口）：
 
 安全：所有文件夹名/文件名由 AI 给出后必须过白名单（与真实目录取交集、单层目录名、
 拒绝路径穿越）；AI 决策无法落地时带具体原因反馈给 AI 自我修正（轮数 router.correction_rounds）。
-无 API Key 或 AI 连续不可用时明确提示，不再偷偷走任何本地规则。
+无 API Key 时：仅 A 级 file_organize（契约规则）可走；查表/改 Word/内容整理明确提示配 Key。
+不把本地规则当成 table_query / word_office 的猜测。
 """
 import re
 import time
@@ -53,13 +54,101 @@ class IntentDispatcher:
         if pending and self._is_wash_reply(user_input):
             return self._handle_pending_wash(user_input, pending)
 
+        selected = [str(p) for p in (file_paths or []) if str(p).strip()]
+
+        # 纠正记忆「忘记」：用户明确说才 revoke（0 token，不碰业务文件）
+        forget_out = self._try_forget_choice(user_input, target_dir, selected, pending)
+        if forget_out is not None:
+            return forget_out
+
+        # A 级 Word 只读（结构 / 批注）：无 Key 也可，不写文件
+        word_read = self._try_local_word_read(
+            user_input, target_dir, selected, progress=progress)
+        if word_read is not None:
+            return word_read
+
+        from agent_core.local_file_intent import (
+            match as local_match,
+            wants_batch_content_new_docs,
+            wants_cleanup_content_cache,
+            wants_find_by_tag,
+            wants_structure_split,
+            wants_tag_backfill,
+            wants_tag_correct,
+            wants_template_fill,
+        )
+        local_verdict = local_match(user_input)
+        local_hit = self._try_local_file_organize(
+            user_input, target_dir, progress=progress, verdict=local_verdict)
+        if local_hit is not None:
+            return local_hit
+
+        if wants_cleanup_content_cache(user_input):
+            from agent_core.local_file_intent import (
+                wants_confirm_cleanup_content_cache,
+            )
+
+            confirm = wants_confirm_cleanup_content_cache(user_input)
+            if progress:
+                progress(
+                    "正在清理分类缓存…" if confirm else "正在预览可清理的分类缓存…"
+                )
+            return self._run_cleanup_content_cache(confirm=confirm)
+
+        # 内容标签：只读找 / 纠正 / 回填（不进整理与 Word 改写）
+        if wants_find_by_tag(user_input):
+            if progress:
+                progress("正在按标签检索…")
+            return self._run_find_by_tag(user_input, target_dir)
+        if wants_tag_correct(user_input):
+            if progress:
+                progress("正在写入标签纠正…")
+            return self._run_tag_correct(user_input, selected)
+        if wants_tag_backfill(user_input):
+            if progress:
+                progress("正在回填历史标签…")
+            return self._run_tag_backfill(target_dir)
+
+        # P2B 模板填槽 → P2A 结构拆段 → P1 六类另存（均 0 token，勿进 A/WordOffice）
+        if wants_template_fill(user_input):
+            if progress:
+                progress("正在按模板填槽并另存成稿…")
+            out = self._run_template_fill(user_input, target_dir, selected)
+            self._progress_content_split_done(progress, out)
+            return out
+        if wants_structure_split(user_input):
+            if progress:
+                progress("正在按标题/章节拆成新文档…")
+            out = self._run_structure_split(user_input, target_dir, selected)
+            self._progress_content_split_done(progress, out)
+            return out
+        if wants_batch_content_new_docs(user_input):
+            if progress:
+                progress("正在按内容识别分类并另存新文档…")
+            out = self._run_batch_content_new_docs(user_input, target_dir)
+            self._progress_content_split_done(progress, out)
+            return out
+
         if not config.get_api_key():
-            return {"handler": "AI代理",
-                    "message": "🔑 当前是 AI 全权代理模式，需要智谱 API Key。\n"
-                               "请到「设置 → 设置智谱 API Key」配置后再下达指令。",
+            if local_verdict.status == "veto" and local_verdict.kind == "consult":
+                return {"handler": "系统",
+                        "message": "这条像在问做法，A 级只执行明确整理（例如「按类型整理」）。\n"
+                                   "问方案需要配置 API Key。",
+                        "operations": []}
+            if local_verdict.status == "veto":
+                return {"handler": "系统",
+                        "message": "🔑 这是查表 / 改 Word / 内容整理，请到「设置 → 聊天模型设置」填写 API Key。\n"
+                                   "本地规则不会把这类指令当成「整理文件」。"
+                                   "只读可试：「检查结构」「看看批注」（需选中 .docx）。"
+                                   "无 Key 也可：内容分类另存 / 按标题拆段 / 模板填槽。",
+                        "operations": []}
+            return {"handler": "系统",
+                    "message": "🔑 这条指令需要模型（查表 / 改 Word 写操作 / 内容整理）。\n"
+                               "请到「设置 → 聊天模型设置」填写 API Key。\n"
+                               "无 Key 可用：A 级整理、检查结构/批注、"
+                               "内容识别分类另存、按标题拆段、模板填槽、忘记洗表选择。",
                     "operations": []}
 
-        selected = [str(p) for p in (file_paths or []) if str(p).strip()]
         if progress:
             progress("正在解析意图…")
         intent = intent_router.route(
@@ -67,7 +156,9 @@ class IntentDispatcher:
         if intent is None:
             return {"handler": "AI代理",
                     "message": "⚠️ AI 决策服务暂时不可用（网络失败或返回无法解析），请稍后重试或换个说法。",
-                    "operations": []}
+                    "operations": [],
+                    "status": "failed",
+                    "reason": "model_unavailable"}
 
         tool = str(intent.get("tool") or "")
         # P1 跨表查询 Tool：仅信任 LLM 分类的 tool 字段（本地不做原文正则猜）
@@ -88,6 +179,13 @@ class IntentDispatcher:
             if progress:
                 progress("正在处理 Word 文档…")
             return self._run_word_office(user_input, target_dir, selected,
+                                         confirmed=confirmed)
+
+        # 文本文件业务线：唯一入口 TextModule.handle()（复用 office_core 公共管线）
+        if tool == "text_office":
+            if progress:
+                progress("正在处理文本文件…")
+            return self._run_text_office(user_input, target_dir, selected,
                                          confirmed=confirmed)
 
         # 整理/统计/导出表格类指令：禁止提前落成闲聊，先锁目录再强制 content 动作
@@ -176,6 +274,98 @@ class IntentDispatcher:
         return self._execute(intent, plan, user_input, work_dir,
                              control=control, channel_id=channel_id, resume=resume)
 
+    def _try_forget_choice(self, user_input: str, target_dir: Path,
+                           selected: list, pending) -> dict | None:
+        """纠正记忆 revoke。只记用户明确说的「忘记」；不碰业务文件。"""
+        from agent_core.local_choice_forget import apply_forget, match, resolve_scopes
+
+        if match(user_input).status != "hit":
+            return None
+        scopes = resolve_scopes(target_dir, selected, pending)
+        if not scopes:
+            return {"handler": "系统",
+                    "message": "没有可忘记的纠正范围。请选中相关 Excel/CSV，"
+                               "或进入含表格的目录后再说「忘记这次洗表选择」。",
+                    "operations": [], "tool": "choice_forget"}
+        out = apply_forget(scopes)
+        n = int(out.get("revoked") or 0)
+        if n <= 0:
+            return {"handler": "系统",
+                    "message": "这些表上没有已记住的洗表/表头纠正（或已忘记）。",
+                    "operations": [], "tool": "choice_forget",
+                    "revoked": 0}
+        names = "、".join(Path(s).name for s in scopes[:5])
+        return {"handler": "系统",
+                "message": "已忘记 %d 条纠正记忆（%s）。下次同指纹会重新询问。"
+                % (n, names),
+                "operations": [], "tool": "choice_forget", "revoked": n}
+
+    def _try_local_word_read(self, user_input: str, target_dir: Path,
+                             selected: list, progress=None) -> dict | None:
+        """A 级 Word 只读：结构检查 / 列出批注 / 列出控件。无 Key、不写文件。"""
+        from agent_core.local_word_read import CANONICAL_PROMPT
+        from agent_core.local_word_read import match as word_read_match
+
+        verdict = word_read_match(user_input)
+        if verdict.status != "hit":
+            return None
+        # 已选中非 Word 文件（如 txt/pdf）时不要抢走指令，交给模型按扩展名路由
+        if selected and not any(str(p).lower().endswith(".docx") for p in selected):
+            return None
+        hint = CANONICAL_PROMPT.get(verdict.op) or "检查结构"
+        docxs = [p for p in (selected or []) if str(p).lower().endswith(".docx")]
+        if not docxs:
+            try:
+                for p in sorted(Path(target_dir).iterdir()):
+                    if p.is_file() and p.suffix.lower() == ".docx" and not p.name.startswith("~$"):
+                        docxs.append(str(p.resolve()))
+                        break
+            except OSError:
+                pass
+        if not docxs:
+            return {"handler": "系统",
+                    "message": "请先选中一个 .docx，或进入只含目标文档的目录，再说「%s」。"
+                    % hint,
+                    "operations": [], "tool": "word_office", "local_a": True}
+        if progress:
+            progress("A 级 Word 只读（不调模型、不写文件）…")
+        # 用明确口令走 WordModule 规则表，避免低置信 inspect 弹窗
+        return self._run_word_office(hint, target_dir, docxs, confirmed=True)
+
+    def _try_local_file_organize(self, user_input: str, target_dir: Path,
+                                 progress=None, verdict=None):
+        """A 级：契约命中才执行。未命中返回 None（有 Key 走模型，无 Key 由调用方提示）。
+        规则对上但当前目录编不出移动清单：有 Key 则升级给模型（架构 A→B），无 Key 才报没对上。
+        """
+        from agent_core.local_file_intent import match as local_match
+
+        if verdict is None:
+            verdict = local_match(user_input)
+        if verdict.status != "hit" or not verdict.intent:
+            return None
+        intent = dict(verdict.intent)
+        path_hit = intent_router.infer_work_dir_from_path(user_input, target_dir)
+        work_dir = path_hit if path_hit is not None and path_hit.is_dir() else target_dir
+        if progress:
+            progress("A 级整理：按契约规则编译移动清单（不调模型）…")
+        plan, feedback = self._compile(intent, work_dir)
+        empty = bool(feedback or not plan or not (plan.get("moves") if plan else None))
+        if empty:
+            if config.get_api_key():
+                return None
+            if feedback or not plan:
+                return {"handler": "系统",
+                        "message": "⚠️ A 级整理没对上当前目录的文件：%s" % (feedback or "无计划"),
+                        "operations": [],
+                        "tool": "file_organize",
+                        "local_a": True}
+            return {"handler": "系统",
+                    "message": "当前目录没有可按该规则移动的文件（只处理当前层，不覆盖已有文件）。",
+                    "operations": [],
+                    "tool": "file_organize",
+                    "local_a": True}
+        return self._execute(intent, plan, user_input, work_dir)
+
     def _collect_query_file_paths(
         self, target_dir: Path, selected_paths: list | None
     ) -> list[str]:
@@ -205,26 +395,376 @@ class IntentDispatcher:
             pass
         return found
 
+    @staticmethod
+    def _progress_content_split_done(progress, out: dict) -> None:
+        """思考条最后一步写成「已结束+原因」，避免停在「正在…」看起来像中断。"""
+        if not progress or not isinstance(out, dict):
+            return
+        reason = str(out.get("reason") or "")
+        ok = bool(out.get("ok"))
+        head = "成稿完成" if ok else "成稿未写出"
+        detail = (out.get("message") or reason or "").strip().replace("\n", " ")
+        if len(detail) > 120:
+            detail = detail[:117] + "…"
+        progress("%s（%s）%s" % (head, reason or "?", (" " + detail) if detail else ""))
+
+    @staticmethod
+    def _pack_content_split_result(result: dict, default_handler: str, default_tool: str) -> dict:
+        msg = str(result.get("message") or "").strip()
+        if not msg:
+            msg = "内容成稿已结束，但没有返回说明（reason=%s）。" % (
+                result.get("reason") or "?")
+        out = {
+            "handler": str(result.get("handler") or default_handler),
+            "message": msg,
+            "operations": list(result.get("operations") or []),
+            "tool": str(result.get("tool") or default_tool),
+            "reason": str(result.get("reason") or ""),
+            "ok": bool(result.get("ok")),
+        }
+        paths = list(result.get("report_paths") or [])
+        if paths:
+            out["report_paths"] = paths
+        for key in (
+            "classifications", "sections", "slots", "missing_slots",
+            "work_dir", "output_dir",
+        ):
+            if result.get(key) is not None:
+                out[key] = result.get(key)
+        return out
+
+    @staticmethod
+    def _run_batch_content_new_docs(user_input: str, target_dir: Path) -> dict:
+        """P1：内容识别 → 按类另存新文档。"""
+        from pipeline.content_split import run_batch_content_new_docs
+
+        return IntentDispatcher._pack_content_split_result(
+            run_batch_content_new_docs(user_input, target_dir) or {},
+            "内容分类",
+            "content_split",
+        )
+
+    @staticmethod
+    def _run_cleanup_content_cache(*, confirm: bool = False) -> dict:
+        """预览或确认清理 storage/content_index 孤儿；聊天须确认才真删。"""
+        from pipeline.content_split import cleanup_orphan_indexes
+
+        res = cleanup_orphan_indexes(dry_run=not confirm) or {}
+        n = len(res.get("removed") or [])
+        kept = len(res.get("kept") or [])
+        deferred = len(res.get("deferred") or [])
+        grace = int(res.get("missing_root_grace_days") or 7)
+        freed = int(res.get("freed_bytes") or 0)
+        if freed >= 1024 * 1024:
+            size_s = f"{freed / (1024 * 1024):.1f} MB"
+        elif freed >= 1024:
+            size_s = f"{freed / 1024:.1f} KB"
+        else:
+            size_s = f"{freed} B"
+        defer_tip = (
+            f"另有 {deferred} 个因「目录暂不可见未满 {grace} 天 / 盘符断开」暂不删。"
+            if deferred
+            else ""
+        )
+        if not confirm:
+            if n <= 0 and deferred <= 0:
+                msg = (
+                    f"没有可清理的分类缓存孤儿（仍保留 {kept} 个有效索引）。\n"
+                    f"位置：{res.get('state_root') or ''}"
+                )
+                reason = "cache_clean_noop"
+            else:
+                msg = (
+                    f"预览：可清理 {n} 个孤儿"
+                    + (f"（约 {size_s}）" if n else "")
+                    + f"；保留有效 {kept}。"
+                    + (f"\n{defer_tip}" if defer_tip else "")
+                    + "\n不碰你的文档。确认请再说：「确认清理分类缓存」。"
+                )
+                reason = "cache_clean_preview"
+        elif n <= 0:
+            msg = (
+                f"没有可清理的分类缓存孤儿（仍保留 {kept} 个有效索引）。"
+                + (f"\n{defer_tip}" if defer_tip else "")
+                + f"\n位置：{res.get('state_root') or ''}"
+            )
+            reason = "cache_clean_noop"
+        else:
+            msg = (
+                f"已清理 {n} 个孤儿分类缓存（约释放 {size_s}；仍保留 {kept} 个）。"
+                + (f"\n{defer_tip}" if defer_tip else "")
+                + "\n仅删「id 已换」或「root 缺失且超过宽限」的索引，不碰你的文档。"
+            )
+            reason = "cache_cleaned"
+        return {
+            "handler": "内容分类",
+            "message": msg,
+            "operations": [],
+            "tool": "content_split",
+            "ok": True,
+            "reason": reason,
+            "removed": list(res.get("removed") or []),
+            "kept": list(res.get("kept") or []),
+            "deferred": list(res.get("deferred") or []),
+            "freed_bytes": freed,
+        }
+
+    @staticmethod
+    def _run_find_by_tag(user_input: str, target_dir: Path) -> dict:
+        """只读：按标签返回路径列表，不搬文件。首次检索前自动回填一次。"""
+        from agent_core.local_file_intent import extract_tag_query
+        from infra import content_tags as ct
+
+        if not ct.tags_enabled():
+            return {
+                "handler": "内容标签",
+                "message": "标签功能已关闭（params.tags.enabled=false）。",
+                "operations": [],
+                "tool": "content_tags",
+                "ok": False,
+                "reason": "disabled",
+            }
+        needle = extract_tag_query(user_input)
+        if not needle:
+            names = "、".join(ct.allowed_tag_names())
+            return {
+                "handler": "内容标签",
+                "message": (
+                    "请写明标签，例如「按标签找合同」。\n"
+                    f"可用标签：{names}"
+                ),
+                "operations": [],
+                "tool": "content_tags",
+                "ok": False,
+                "reason": "no_tag",
+            }
+        # 首次启用：自动回填工作目录下「内容分类/」（幂等，记 meta）
+        try:
+            ct.ensure_auto_backfill(Path(target_dir))
+        except Exception:  # noqa: BLE001
+            pass
+        hits = ct.find_by_tag(needle, limit=50, require_alive=True)
+        if not hits:
+            return {
+                "handler": "内容标签",
+                "message": (
+                    f"没有找到标签「{needle}」的有效路径。"
+                    "可先「内容识别分类」或「回填标签」。"
+                ),
+                "operations": [],
+                "tool": "content_tags",
+                "ok": True,
+                "reason": "empty",
+                "paths": [],
+                "tags_query": needle,
+            }
+        lines = [f"标签「{needle}」共 {len(hits)} 条（只读，未改文件）："]
+        paths = []
+        for i, h in enumerate(hits, 1):
+            p = h.get("path") or ""
+            tags = "、".join(h.get("tags") or [])
+            src = h.get("source") or ""
+            lines.append(f"{i}. {p}  [{tags}] ({src})")
+            if p:
+                paths.append(p)
+        return {
+            "handler": "内容标签",
+            "message": "\n".join(lines),
+            "operations": [],
+            "tool": "content_tags",
+            "ok": True,
+            "reason": "ok",
+            "paths": paths,
+            "tags_query": needle,
+        }
+
+    @staticmethod
+    def _run_tag_correct(user_input: str, selected: list) -> dict:
+        """纠正：hash→tags（choice_memory + content_tags），不搬文件。"""
+        import hashlib
+
+        from agent_core.local_file_intent import extract_tag_correction
+        from infra import content_tags as ct
+
+        if not ct.tags_enabled():
+            return {
+                "handler": "内容标签",
+                "message": "标签功能已关闭（params.tags.enabled=false）。",
+                "operations": [],
+                "tool": "content_tags",
+                "ok": False,
+                "reason": "disabled",
+            }
+        new_tags = extract_tag_correction(user_input)
+        cleaned = ct.normalize_tags(new_tags)
+        if not cleaned:
+            names = "、".join(ct.allowed_tag_names())
+            return {
+                "handler": "内容标签",
+                "message": (
+                    "未能解析纠正后的标签。示例：「这篇不是合同，是项目」。\n"
+                    f"可用：{names}"
+                ),
+                "operations": [],
+                "tool": "content_tags",
+                "ok": False,
+                "reason": "bad_tags",
+            }
+        paths = [Path(p) for p in (selected or []) if p]
+        paths = [p for p in paths if p.is_file() and p.suffix.lower() == ".docx"]
+        if not paths:
+            return {
+                "handler": "内容标签",
+                "message": "请先选中要纠正的 .docx，再说「这篇不是合同，是项目」。",
+                "operations": [],
+                "tool": "content_tags",
+                "ok": False,
+                "reason": "no_selection",
+            }
+        ok_n = 0
+        for p in paths:
+            try:
+                digest = hashlib.sha256(p.read_bytes()).hexdigest()
+            except OSError:
+                continue
+            if ct.apply_user_override(digest, str(p.resolve()), cleaned):
+                ok_n += 1
+        tag_s = "、".join(cleaned)
+        if ok_n <= 0:
+            return {
+                "handler": "内容标签",
+                "message": "纠正未写入（库不可用或哈希失败）。",
+                "operations": [],
+                "tool": "content_tags",
+                "ok": False,
+                "reason": "write_fail",
+            }
+        return {
+            "handler": "内容标签",
+            "message": (
+                f"已纠正 {ok_n} 份标签为「{tag_s}」（只改本地库，文件未移动）。\n"
+                "下次同内容分类不会覆盖该纠正；可用「按标签找…」验证。"
+            ),
+            "operations": [],
+            "tool": "content_tags",
+            "ok": True,
+            "reason": "ok",
+            "tags": cleaned,
+        }
+
+    @staticmethod
+    def _run_tag_backfill(target_dir: Path) -> dict:
+        """对工作目录下「内容分类/」现存 docx 回填标签。"""
+        from infra import content_tags as ct
+
+        if not ct.tags_enabled():
+            return {
+                "handler": "内容标签",
+                "message": "标签功能已关闭（params.tags.enabled=false）。",
+                "operations": [],
+                "tool": "content_tags",
+                "ok": False,
+                "reason": "disabled",
+            }
+        root = Path(target_dir) / "内容分类"
+        result = ct.ensure_auto_backfill(Path(target_dir), force=True) or {}
+        if not result.get("ok"):
+            reason = result.get("reason") or "fail"
+            return {
+                "handler": "内容标签",
+                "message": (
+                    f"回填未完成（{reason}）。"
+                    f"请确认存在目录：{root}"
+                ),
+                "operations": [],
+                "tool": "content_tags",
+                "ok": False,
+                "reason": str(reason),
+            }
+        return {
+            "handler": "内容标签",
+            "message": (
+                f"回填完成：写入 {result.get('written', 0)}，"
+                f"跳过 {result.get('skipped', 0)}（幂等，未改文件）。\n"
+                f"目录：{result.get('root') or root}"
+            ),
+            "operations": [],
+            "tool": "content_tags",
+            "ok": True,
+            "reason": "ok",
+            "written": result.get("written", 0),
+            "skipped": result.get("skipped", 0),
+        }
+
+    @staticmethod
+    def _run_structure_split(user_input: str, target_dir: Path, selected: list) -> dict:
+        """P2A：按标题/章节结构拆段另存。"""
+        from pipeline.content_split import run_structure_split
+
+        return IntentDispatcher._pack_content_split_result(
+            run_structure_split(user_input, target_dir, selected_files=selected) or {},
+            "结构拆分",
+            "structure_split",
+        )
+
+    @staticmethod
+    def _run_template_fill(user_input: str, target_dir: Path, selected: list) -> dict:
+        """P2B：模板填槽另存（不做仿写）。"""
+        from pipeline.content_split import run_template_fill
+
+        return IntentDispatcher._pack_content_split_result(
+            run_template_fill(user_input, target_dir, selected_files=selected) or {},
+            "模板成稿",
+            "template_fill",
+        )
+
     def _run_word_office(self, user_input: str, target_dir: Path, selected: list,
                          confirmed: bool = False) -> dict:
         """Word 编辑业务线：唯一入口 WordModule.handle()。执行层独立，不注册 capabilities。"""
         from pipeline.word_office import WordModule
 
+        return self._run_office_module(
+            WordModule, "WordOffice", "word_office",
+            user_input, target_dir, selected, confirmed)
+
+    def _run_text_office(self, user_input: str, target_dir: Path, selected: list,
+                         confirmed: bool = False) -> dict:
+        """文本文件业务线：唯一入口 TextModule.handle()。"""
+        from pipeline.text_office import TextModule
+
+        return self._run_office_module(
+            TextModule, "TextOffice", "text_office",
+            user_input, target_dir, selected, confirmed)
+
+    def _run_office_module(self, module, handler: str, tool: str,
+                           user_input: str, target_dir: Path, selected: list,
+                           confirmed: bool = False) -> dict:
+        """Word/Text 共用的接入层：构造 request、透出 patch_set / txn / 报告路径。"""
         request = {
             "user_input": user_input,
             "target_dir": str(target_dir),
             "selected_files": list(selected or []),
             "confirmed": bool(confirmed),
         }
-        result = WordModule.handle(request) or {}
-        return {
-            "handler": "WordOffice",
+        result = module.handle(request) or {}
+        out = {
+            "handler": handler,
             "message": str(result.get("message") or ""),
             "operations": list(result.get("user_actions") or []),
             "status": str(result.get("status") or ""),
             "reason": str(result.get("reason") or ""),
             "patch_set": result.get("patch_set") or {},
+            "txn": result.get("txn") or {},
+            "tool": tool,
         }
+        # D/E Report 路径透出（A/B/C 通常无此字段）
+        if result.get("report_path"):
+            out["report_path"] = result.get("report_path")
+        if result.get("report_paths"):
+            out["report_paths"] = list(result.get("report_paths") or [])
+        if result.get("report_skipped"):
+            out["report_skipped"] = True
+        return out
 
     def _run_table_query_tool(
         self,
@@ -424,8 +964,10 @@ class IntentDispatcher:
 
         # 1) 不用 → 保留原表
         if text in self._WASH_NO:
+            capabilities._remember_wash(
+                file_path, table, parsed.get("hash") or "", "skip")
             capabilities.clear_pending_wash()
-            return {"handler": "系统", "message": "✅ 已保留原表。", "operations": []}
+            return {"handler": "系统", "message": "✅ 已保留原表（下次同文件同指纹不再问）。", "operations": []}
 
         # 2) 让模型恢复（只有用户明确要求才调 LLM）
         if any(w in text for w in self._RECOVER):
@@ -461,8 +1003,10 @@ class IntentDispatcher:
             ctx = {"data": {"skip_wash": True}, "operations": [],
                    "api_key": config.get_api_key(), "user_input": user_input}
             capabilities._finish_table(ctx, parsed)
+            capabilities._remember_wash(
+                file_path, table, parsed.get("hash") or "", "headers", names)
             capabilities.clear_pending_wash()
-            return {"handler": "系统", "message": "✅ 已按你给的表头更新。", "operations": []}
+            return {"handler": "系统", "message": "✅ 已按你给的表头更新（下次同文件同指纹直接套用）。", "operations": []}
 
         # 4) 洗/要 → 走几何洗（沿用旧逻辑，洗不动仍会保留原表）
         if text not in self._WASH_YES:
@@ -480,7 +1024,9 @@ class IntentDispatcher:
                     "message": "⚠️ 二次洗没能改善这张表（成空/行数骤减/仍认不出），已保留原表。"
                                "你可以补充表头（如「表头是设备、负责人」）或回复「让模型恢复」。",
                     "operations": []}
-        return {"handler": "系统", "message": "✅ 已按你的确认完成二次洗。", "operations": []}
+        return {"handler": "系统",
+                "message": "✅ 已按你的确认完成二次洗（下次同文件同指纹不再问）。",
+                "operations": []}
 
     # ------------------------------------------------------------------
     # 编译：把 AI 的动作翻译为"文件级、可安全执行"的计划
@@ -537,7 +1083,7 @@ class IntentDispatcher:
     def _compile_file(self, action: dict, files: list, actual: dict, moving: set):
         """
         把单个文件动作编译为 [(文件名, 目标文件夹名)...]。
-        决策完全来自 AI（直接点名或给筛选参数），这里只做机械匹配与消毒。
+        动作来自模型或 A 级契约规则；这里只做机械匹配与消毒，不再决策。
         """
         op, p = action["op"], action.get("params", {})
         out = []
@@ -681,8 +1227,33 @@ class IntentDispatcher:
                           if Path(n).suffix.lower() in doc_exts]
         want_synth_early = self._wants_table_synthesize(
             user_input, {"output_format": "", "constraints": []})
+        # A 级本地整理：移动清单已编译，禁止再调任务规划模型
+        if intent.get("local_a_file_organize") and plan.get("moves"):
+            if self._progress:
+                self._progress("A 级整理：跳过任务规划，直接移动…")
+            planned = {
+                "intent": task_planner.normalize_intent({
+                    "operation_type": "file_organize",
+                    "execution_mode": "execute",
+                    "file_scope": "当前目录顶层文件",
+                    "target_object": (user_input or "")[:120],
+                    "filter_conditions": [],
+                    "sort_requirement": {},
+                    "output_format": "text",
+                    "constraints": ["A级本地规则", "0 token"],
+                }),
+                "tasks": [{
+                    "task_id": "org_local",
+                    "task_name": "A 级文件整理",
+                    "capability": "file_organize",
+                    "dependencies": [],
+                    "parallel_possible": False,
+                    "input": {},
+                    "expected_output": "移动清单",
+                }],
+            }
         # 表格合成：跳过任务规划 AI（常失败且耗时长），本地直出 DAG
-        if want_synth_early:
+        elif want_synth_early:
             if self._progress:
                 self._progress("表格合成：跳过任务规划，直达扫描/解析/合成…")
             planned = {
@@ -712,10 +1283,16 @@ class IntentDispatcher:
 
         tasks = planned["tasks"]
         intent8 = planned["intent"]
-        # 语义解析输出格式：用户说 word 就 word，说 excel 就 excel，绝不互相覆盖
-        intent8["output_format"] = self._resolve_output_format(user_input, intent8)
-        want_synth = self._wants_table_synthesize(user_input, intent8) or want_synth_early
-        need_file = intent8["output_format"] in ("word", "excel", "xlsx", "csv")
+        # A 级本地整理：禁止被「表格/导出」信号劫持成 content DAG（那要模型）
+        if intent.get("local_a_file_organize"):
+            intent8["output_format"] = "text"
+            want_synth = False
+            need_file = False
+        else:
+            # 语义解析输出格式：用户说 word 就 word，说 excel 就 excel，绝不互相覆盖
+            intent8["output_format"] = self._resolve_output_format(user_input, intent8)
+            want_synth = self._wants_table_synthesize(user_input, intent8) or want_synth_early
+            need_file = intent8["output_format"] in ("word", "excel", "xlsx", "csv")
 
         if want_synth:
             # 强制干净串行 DAG，避免 AI 把 synthesize 与 parse 并行或只 parse 单个文件
@@ -764,17 +1341,21 @@ class IntentDispatcher:
                               "parallel_possible": False, "input": {},
                               "expected_output": f"{intent8['output_format']} 文件"})
 
-        # 兜底3：AI 没排 review 时本地强制追加（依赖全部任务，软依赖不阻塞）
-        tasks = [t for t in tasks if t["capability"] != "review"]  # 重建依赖更干净
-        # 规范化依赖：去掉已删除任务的边
-        valid = {t["task_id"] for t in tasks}
-        for t in tasks:
-            t["dependencies"] = [d for d in t.get("dependencies") or [] if d in valid]
-        tasks.append({"task_id": "review_final", "task_name": "统一复核",
-                      "capability": "review",
-                      "dependencies": [t["task_id"] for t in tasks],
-                      "parallel_possible": False, "input": {},
-                      "expected_output": "复核结论 JSON"})
+        # A 级机械移动：不追加复核任务（复核默认会调模型，违背 0 token）
+        if not intent.get("local_a_file_organize"):
+            tasks = [t for t in tasks if t["capability"] != "review"]
+            valid = {t["task_id"] for t in tasks}
+            for t in tasks:
+                t["dependencies"] = [d for d in t.get("dependencies") or [] if d in valid]
+            tasks.append({"task_id": "review_final", "task_name": "统一复核",
+                          "capability": "review",
+                          "dependencies": [t["task_id"] for t in tasks],
+                          "parallel_possible": False, "input": {},
+                          "expected_output": "复核结论 JSON"})
+        else:
+            valid = {t["task_id"] for t in tasks}
+            for t in tasks:
+                t["dependencies"] = [d for d in t.get("dependencies") or [] if d in valid]
 
         def _report(msg):
             if self._progress:
@@ -786,7 +1367,8 @@ class IntentDispatcher:
         if getattr(ctrl, "status", "") == "idle":
             ctrl.reset()
         ctx = {"user_input": user_input, "work_dir": work_dir, "target_dir": work_dir,
-               "api_key": config.get_api_key(), "intent": intent8,
+               "api_key": "" if intent.get("local_a_file_organize") else config.get_api_key(),
+               "intent": intent8,
                "moves": plan["moves"], "operations": [], "data": {}, "report": _report,
                "control": ctrl, "channel_id": channel_id}
         if resume:

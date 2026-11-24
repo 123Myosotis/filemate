@@ -27,9 +27,12 @@ def _stubs(monkeypatch):
     })
     monkeypatch.setattr("pipeline.stage1_parser.file_parser.parse_file",
                         lambda p: _parsed())
+    from db import choice_memory
+    choice_memory.forget_scope("table_wash", "/tmp/t.xlsx")
     cap.clear_pending_wash()
     yield
     cap.clear_pending_wash()
+    choice_memory.forget_scope("table_wash", "/tmp/t.xlsx")
 
 
 def _ask(monkeypatch):

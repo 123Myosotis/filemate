@@ -17,6 +17,9 @@
     "ops_whitelist": [
       "find_replace",
       "inspect",
+      "list_comments",
+      "list_controls",
+      "list_fields",
       "l1",
       "insert",
       "delete",
@@ -31,6 +34,27 @@
     ],
     "decision_rules": [
       {
+        "id": "R_D_STRONG_GEN",
+        "tier": "D",
+        "when": {
+          "any_keyword": [
+            "生成标书", "做标书", "写标书", "起草标书", "撰写标书", "生成投标书",
+            "生成合同", "起草合同", "撰写合同", "生成整份大纲"
+          ]
+        },
+        "note": "严：必须是生成/起草整词；单字「合同」「标书」不升 D（防乱出报告）"
+      },
+      {
+        "id": "R_E_EXPLICIT_CHUNK",
+        "tier": "E",
+        "when": {
+          "any_keyword": [
+            "按章节分块处理", "分块后逐段处理", "多文件批量改Word", "多文件批量改文档"
+          ]
+        },
+        "note": "严：仅显式分块/多文件口令；大文档 route 提示不升 E"
+      },
+      {
         "id": "R_B_AI_HINT",
         "tier": "B",
         "when": {
@@ -43,12 +67,26 @@
         "when": {"default": true}
       }
     ],
+    "report": {
+      "tiers": ["D", "E"],
+      "require_write": true,
+      "require_applied_gt_0": true,
+      "require_txn_committed": true,
+      "e_requires_batch_or_emit_flag": true,
+      "note": "A/B/C 与只读绝不生成；须 applied>0 且 txn=committed；E 另需 batch/emit_report；报告失败不推翻写回"
+    },
     "intent_rules": [
       {
         "id": "R_TRACKED",
         "op": "tracked_change",
         "priority": 110,
         "pattern": "(?:修订|留痕|记录修订)[：:]\\s*(?:把|将)\\s*(.+?)\\s*(?:替换成|替换为|改成|改为|换成)\\s*(.+?)(?:[。，,；;]|$)"
+      },
+      {
+        "id": "R_REPLACE_QUOTED",
+        "op": "find_replace",
+        "priority": 105,
+        "pattern": "(?:把|将)\\s*(?:这份?文档里的|文档里的|文中的|全文的)?\\s*[「「\"'](.+?)[」」\"']\\s*(?:全部)?\\s*(?:替换成|替换为|改成|改为|换成)\\s*[「「\"'](.+?)[」」\"']"
       },
       {
         "id": "R_REPLACE",
@@ -67,6 +105,30 @@
         "op": "delete",
         "priority": 80,
         "pattern": "(?:删除|删掉|移除)(?!\\s*原)\\s*(.+?)(?:[。，,；;]|$)"
+      },
+      {
+        "id": "R_LIST_COMMENTS",
+        "op": "list_comments",
+        "priority": 75,
+        "pattern": "(?:看看|查看|列出|有哪些|有什么)?\\s*批注|(?:批注)\\s*(?:列表|有哪些|多少)"
+      },
+      {
+        "id": "R_LIST_CONTROLS",
+        "op": "list_controls",
+        "priority": 74,
+        "pattern": "(?:看看|查看|列出|有哪些|有什么)?\\s*(?:内容)?控件|(?:内容控件|内容控制|表单域)\\s*(?:列表|有哪些|多少)"
+      },
+      {
+        "id": "R_LIST_FIELDS",
+        "op": "list_fields",
+        "priority": 73,
+        "pattern": "(?:看看|查看|列出|有哪些|有什么)?\\s*(?:字段|域|交叉引用)|(?:交叉引用|字段|域)\\s*(?:列表|有哪些|多少)"
+      },
+      {
+        "id": "R_INSPECT",
+        "op": "inspect",
+        "priority": 20,
+        "pattern": "(?:检查结构|看看结构|结构检查|文档结构)"
       }
     ],
     "budget": {
@@ -78,6 +140,136 @@
     },
     "memory_related_max": 3,
     "note": "Word 编辑业务线；A–E 任务级；接入层共享、执行层独立（不注册 capabilities.py）。"
+  },
+  "file_organize": {
+    "tool": "file_organize",
+    "tier": "A",
+    "ops_whitelist": [
+      "move",
+      "organize_by_ext",
+      "move_keyword",
+      "move_recent",
+      "move_date"
+    ],
+    "default_ext_map": {
+      ".pdf": "文档",
+      ".doc": "文档",
+      ".docx": "文档",
+      ".txt": "文档",
+      ".jpg": "图片",
+      ".jpeg": "图片",
+      ".png": "图片",
+      ".gif": "图片",
+      ".mp4": "视频",
+      ".mov": "视频",
+      ".avi": "视频",
+      ".mp3": "音频",
+      ".wav": "音频",
+      ".zip": "压缩包",
+      ".rar": "压缩包",
+      ".7z": "压缩包",
+      ".exe": "程序",
+      ".msi": "程序"
+    },
+    "keyword_map": {
+      "合同": "合同类"
+    },
+    "date_format": "%Y/%m",
+    "veto_patterns": [
+      {
+        "id": "V_CONSULT",
+        "priority": 210,
+        "kind": "consult",
+        "pattern": "(?:怎么(?:整理|归档|分类)|如何(?:整理|归档|分类)|能不能|可不可以|先给方案|先别动|先别(?:整理|移动))"
+      },
+      {
+        "id": "V_TABLE_DATA",
+        "priority": 205,
+        "kind": "table",
+        "pattern": "(?:Excel|xlsx|csv|表格).{0,12}(?:里|中的|数据|单元格)|(?:从表(?:格)?(?:里|中))"
+      },
+      {
+        "id": "V_TABLE",
+        "priority": 200,
+        "kind": "table",
+        "pattern": "(?:跨表|联查|单元格|生成新表|这几张表|这些表格|整理表格|选中的几个\\s*Excel|从表里|表里的|筛选出|查出)"
+      },
+      {
+        "id": "V_WORD",
+        "priority": 190,
+        "kind": "word",
+        "pattern": "(?:润色|替换成|替换为|改成|改为|加粗|斜体|修订|留痕|插入一段|改标题)"
+      },
+      {
+        "id": "V_WORD_DOC",
+        "priority": 191,
+        "kind": "word",
+        "pattern": "(?:这个\\s*Word|这篇(?:文档|Word)|Word\\s*(?:里|文档里)|\\.docx\\s*里|(?:word|Word)\\s*文档.{0,48}(?:内容识别|识别后|分类整理进|进各自新文档))"
+      },
+
+      {
+        "id": "V_CONTENT",
+        "priority": 180,
+        "kind": "content",
+        "pattern": "(?:整理内容|内容整理|内容识别|识别内容|按内容(?:分类|整理)|识别(?:后|一下).{0,40}(?:分类|整理)|(?:分类|整理)进(?:各自)?新文档|摘要|总结(?:一下)?内容|提取(?:一下)?内容|生成报告)"
+      },
+      {
+        "id": "V_STRUCTURE_SPLIT",
+        "priority": 182,
+        "kind": "content",
+        "pattern": "(?:按(?:标题|章节|大纲)拆|拆成多份新文档|按章节拆成新文档|按标题拆成新文档|结构拆分|拆段成(?:新)?文档)"
+      },
+      {
+        "id": "V_TEMPLATE_FILL",
+        "priority": 183,
+        "kind": "content",
+        "pattern": "(?:按模板(?:套写|填|成稿)|模板套写|填槽(?:成稿)?|套写(?:成稿)?|用模板(?:生成|填写|成稿)|模板填槽)"
+      },
+
+      {
+        "id": "V_QUERY",
+        "priority": 170,
+        "kind": "query",
+        "pattern": "(?:是多少|多少钱|查询|查一下)"
+      }
+    ],
+    "intent_rules": [
+      {
+        "id": "R_BY_EXT",
+        "op": "organize_by_ext",
+        "priority": 90,
+        "pattern": "(?:按(?:类型|扩展名|格式|后缀|文件类型)|分类到文档|按扩展名整理)"
+      },
+      {
+        "id": "R_RECENT",
+        "op": "move_recent",
+        "priority": 85,
+        "pattern": "最近\\s*(\\d+)\\s*天"
+      },
+      {
+        "id": "R_DATE",
+        "op": "move_date",
+        "priority": 80,
+        "pattern": "(?:按(?:日期|时间|年月)|按修改时间归档|归档到年)"
+      },
+      {
+        "id": "R_KEYWORD_CONTRACT",
+        "op": "move_keyword",
+        "priority": 70,
+        "pattern": "(?:合同).{0,12}(?:归档|整理|归类|放到|移到)|(?:归档|整理|归类).{0,12}合同",
+        "params": {
+          "keyword": "合同",
+          "folder": "合同类"
+        }
+      },
+      {
+        "id": "R_DEFAULT_ORGANIZE",
+        "op": "default_pack",
+        "priority": 10,
+        "pattern": "(?:整理|归档|分类|归类)(?!\\s*内容)"
+      }
+    ],
+    "note": "A 级文件整理（0 token）。只认本分区规则；veto 命中则绝不整理，交给模型或提示配 Key。不猜 table_query / word_office。"
   },
   "min_acceptable_version": "v1.1.0",
   "compat_window_until_version": "v1.8.0",

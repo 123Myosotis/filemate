@@ -1,4 +1,7 @@
-# 准确性硬修批验收（已关闭）
+# 准确性硬修批验收（已关闭 / 脚本 DEPRECATED）
+
+> **活门禁勿再跑** `python -m tests.acceptance.accuracy_hardfix`：默认 SKIP。  
+> 正文冻结在 v1.0.0 / 已删 API；强制旧跑需 `FILEMATE_RUN_DEPRECATED_HARDFIX=1`（不推荐）。重写另排期。
 
 ```text
 run_id: 20261018

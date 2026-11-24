@@ -52,6 +52,9 @@ class ToolRegistry:
     """工具注册表（op → 执行器名）."""
     tools: dict = field(default_factory=lambda: {
         "inspect": "_execute",
+        "list_comments": "_exec_list_comments",
+        "list_controls": "_exec_list_controls",
+        "list_fields": "_exec_list_fields",
         "find_replace": "_execute",
         "insert": "_exec_insert",
         "delete": "_exec_delete",
@@ -72,13 +75,14 @@ class CapabilityManifest:
     """能力清单（本模块能做什么/不能做什么）."""
     supported_formats: list = field(default_factory=lambda: ["docx"])
     op_types: list = field(default_factory=lambda: [
-        "inspect", "replace", "insert", "delete", "format", "move",
-        "tracked_change", "outline", "table_to_text", "text_to_table",
+        "inspect", "list_comments", "list_controls", "list_fields",
+        "replace", "insert", "delete", "format", "move", "tracked_change",
+        "outline", "table_to_text", "text_to_table",
         "table_to_outline", "outline_to_table",
     ])
     rejected: list = field(default_factory=lambda: [
         "comment", "content_control", "field", "bookmark",
-    ])
+    ])  # 写批注/写控件/写字段仍拒；list_* = 只读已放开
 
 
 @dataclass

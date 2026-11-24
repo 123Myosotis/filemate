@@ -18,6 +18,7 @@ from pipeline.block_cross_table.query_engine.qp_ai import (
     QP_SYSTEM,
     annotate_projection_provenance_weak,
     check_plan_ready_condition_trees,
+    check_plan_ready_join_keys,
     qp_call_ai,
 )
 from scripts.m10_clean_runner_lib import run_qp_case
@@ -127,6 +128,53 @@ class TestConditionTreeGate(unittest.TestCase):
         plan["condition_trees"] = {"t1": {"conditions": []}}
         plan["steps"][0]["args"] = {"condition_tree_id": "t1"}
         check_plan_ready_condition_trees(plan)
+
+
+class TestJoinKeyGate(unittest.TestCase):
+    def test_join_without_keys_rejected(self):
+        plan = _base_plan()
+        plan["steps"] = [
+            {
+                "step_id": "j1",
+                "op": "op_join",
+                "args": {"condition_tree_id": None, "conditions": []},
+                "inputs": ["src:t_a", "src:t_b"],
+                "output": "joined",
+                "provenance": {"utterance_span": "join"},
+            }
+        ]
+        with self.assertRaises(QueryEngineError) as ctx:
+            check_plan_ready_join_keys(plan)
+        self.assertEqual(ctx.exception.fail_locus, "join_key")
+        self.assertEqual(ctx.exception.subreason, "join_keys_missing")
+
+    def test_join_with_keys_ok(self):
+        plan = _base_plan()
+        plan["steps"] = [
+            {
+                "step_id": "j1",
+                "op": "op_join",
+                "args": {"left_key": "id", "right_key": "id"},
+                "inputs": ["src:t_a", "src:t_b"],
+                "output": "joined",
+                "provenance": {"utterance_span": "join"},
+            }
+        ]
+        check_plan_ready_join_keys(plan)
+
+    def test_union_skips_key_requirement(self):
+        plan = _base_plan()
+        plan["steps"] = [
+            {
+                "step_id": "j1",
+                "op": "op_join",
+                "args": {"mode": "union_all"},
+                "inputs": ["src:t_a", "src:t_b"],
+                "output": "joined",
+                "provenance": {"utterance_span": "union"},
+            }
+        ]
+        check_plan_ready_join_keys(plan)
 
     def test_qp_retry_heals_dangling_tree(self):
         calls = {"n": 0}

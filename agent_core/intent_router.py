@@ -26,7 +26,10 @@ import config
 FILE_OPS = {"move", "organize_by_ext", "move_keyword", "move_recent", "move_date"}
 CONTENT_OPS = {"extract", "summary", "stats", "join", "report"}
 VALID_MODES = {"execute", "consult", "chat"}
-VALID_TOOLS = {"file_organize", "table_query", "table_synthesize", "word_office", "chat"}
+VALID_TOOLS = {
+    "file_organize", "table_query", "table_synthesize",
+    "word_office", "text_office", "chat",
+}
 
 _PROMPT_TEMPLATE = """你是 FileMate 的唯一意图决策器（Agent Router）。本地程序只按你的 JSON 调度工具。只输出一个 JSON 对象，禁止输出 JSON 以外的任何文字、不要 markdown 代码块。
 
@@ -52,6 +55,13 @@ tool 只能是以下之一：
 - word_office：对 **Word 文档（.docx）本身**做编辑——改写/润色/校对/摘要/替换文本/格式/批注/大纲。
   强信号：用户明确点名「Word / docx / 文档里某段 / 这段文字 / 这个标题」，且要**改文档内容或格式**。
   反例：只是「读 Word 内容 / 总结」且**不改文档** → 仍用 table_synthesize 或 chat，不选 word_office。
+  反例：「内容识别后分类整理进各自新文档 / 按标题拆成新文档 / 按模板填槽」→ **禁止** word_office
+    （本地成稿族：分类另存 / 结构拆段 / 模板填槽；不是改某一个已选中的 docx）。
+- text_office：对 **纯文本文件（.txt/.md/.json/.log）本身**做编辑——全文替换、删除/插入某一行、
+  JSON 校验/格式化/压缩、查看编码与行数。
+  强信号：选中或点名 txt/md/json 文件，并且要**改文件内容**。
+  反例：只是「读一下 / 总结 / 提炼要点」→ 不选 text_office（不改文件），走 chat 或内容整理。
+  反例：CSV/Excel 表格数据查询 → 选 table_query，不选 text_office。
 - file_organize：只移动/归类/按扩展名或文件名归档**文件本身**（不读单元格业务逻辑）。
 - chat：问候闲聊、与文件/表格无关。
 冲突裁决：只要目标是「表里的数据」而不是「文件放哪个文件夹」，即使口语带「整理」，也选 table_query（或 table_synthesize），绝不能 file_organize。
@@ -86,7 +96,7 @@ tool 只能是以下之一：
 - 语义模糊无法确定文件时，在 plan 里说明需要用户补充什么，actions 中不要放猜测的文件。
 
 只输出如下 JSON：
-{{"tool":"file_organize|table_query|table_synthesize|word_office|chat","mode":"execute|consult|chat","subdir":"","actions":[...],"plan":""}}"""
+{{"tool":"file_organize|table_query|table_synthesize|word_office|text_office|chat","mode":"execute|consult|chat","subdir":"","actions":[...],"plan":""}}"""
 
 _CORRECTION_HINT = """
 
@@ -446,12 +456,12 @@ def _normalize(data, user_input: str = "") -> dict:
         if inferred is None:
             raise ValueError(
                 "tool 字段缺失或非法，且无法从 actions 结构推断；"
-                "请输出 tool=file_organize|table_query|table_synthesize|word_office|chat"
+                "请输出 tool=file_organize|table_query|table_synthesize|word_office|text_office|chat"
             )
         tool_raw = inferred
-    if mode == "chat" and tool_raw != "word_office":
+    if mode == "chat" and tool_raw not in ("word_office", "text_office"):
         tool_raw = "chat"
-    if tool_raw in ("table_query", "word_office") and mode == "chat":
+    if tool_raw in ("table_query", "word_office", "text_office") and mode == "chat":
         mode = "execute"
     return {
         "tool": tool_raw,

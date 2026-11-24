@@ -32,29 +32,38 @@ web/memory_correction/.token
 db/*.db
 db/*.db-*
 storage/*.json
+storage/content_index/
 storage/evidence/
 diagnostics/
 web/*/logs/
 *.log
 
-# ---- 私有数据（勿外发）----
-构建/
-刁难抽查/
-测试/
-零售抽查/
-冷链抽查/
+# ---- 验收误写仓库根（应设 FILEMATE_ACCEPTANCE_DIR）----
+/evidence/
+/report/
+/empty_force_reject.json
+/v1_0_0_force_reject.json
+/EVIDENCE*.md
+
+# ---- 私有数据 / 本地验收（勿外发；不属于产品源码）----
 acceptance/
 data/
 公司私有数据_勿发布/
+测试/
+零售抽查/
+冷链抽查/
 
-# ---- 无关脚本（招聘爬虫）----
+# ---- 已收口旁路（防复发；勿再往根目录塞）----
+构建/
+刁难抽查/
+_scratch/
 scrape_*.py
 build_output.py
-
-# ---- 文档（本仓库只上传源码）----
-*.docx
-# 根目录原件；归档副本在 docs/specs/（可上传）
 word_office_接入设计草案.md
+库列表.txt
+
+# ---- 文档二进制（规格正文在 docs/specs/*.md）----
+*.docx
 
 # ---- 表格样本（测试夹具除外）----
 *.xlsx
@@ -66,5 +75,10 @@ word_office_接入设计草案.md
 # ---- 本地 git 备份 ----
 .git.bak/
 
-# ---- 本地临时 / 招聘脚本（不属于本项目）----
-_scratch/
+# ---- 个人求职材料（含个人信息，勿外发）----
+resume_raw.txt
+notes_raw.txt
+_build_resume_tmp.py
+_resume_preview*.png
+张敬轩-简历*.pdf
+张敬轩-简历*.docx

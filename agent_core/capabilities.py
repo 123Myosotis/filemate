@@ -177,15 +177,59 @@ def _target_paths(ctx, task):
 _PENDING_WASH_PATH = Path(__file__).resolve().parents[1] / "storage" / "pending_wash.json"
 
 
-def write_pending_wash(file_path, table):
+def write_pending_wash(file_path, table, file_hash=""):
     """记下"等用户回答是否二次洗"（跨轮持久化）。"""
     try:
         _PENDING_WASH_PATH.parent.mkdir(parents=True, exist_ok=True)
         _PENDING_WASH_PATH.write_text(
-            json.dumps({"file": str(file_path), "table": str(table)}, ensure_ascii=False),
+            json.dumps({"file": str(file_path), "table": str(table),
+                        "hash": str(file_hash or "")}, ensure_ascii=False),
             encoding="utf-8")
     except Exception:
         pass
+
+
+def _remember_wash(path, table, file_hash, action, columns=None):
+    """只在用户纠正后写后台记忆。不碰原表文件。"""
+    try:
+        from db import choice_memory
+        choice_memory.record(
+            "table_wash", str(path or ""), str(table or ""),
+            {"action": action, "file_hash": str(file_hash or ""),
+             "columns": list(columns or [])},
+        )
+    except Exception:
+        pass
+
+
+def _remembered_wash_action(parsed, tname, original):
+    """同路径+同表+同指纹的纠正才套用；否则当 miss。"""
+    try:
+        from db import choice_memory
+        hit = choice_memory.lookup(
+            "table_wash", str(parsed.get("path") or ""), str(tname or ""),
+            file_hash=str(parsed.get("hash") or ""),
+        )
+    except Exception:
+        return None
+    if not hit:
+        return None
+    val = hit.get("value") or {}
+    action = str(val.get("action") or "")
+    if action == "headers":
+        names = [str(x) for x in (val.get("columns") or []) if str(x).strip()]
+        old = list(original.get("columns") or [])
+        if names and len(names) == len(old):
+            choice_memory.touch(hit.get("choice_id") or "")
+            return {"table": _assign_columns(original, names)}
+        return None
+    if action == "skip":
+        choice_memory.touch(hit.get("choice_id") or "")
+        return {"confirm": False}
+    if action == "wash":
+        choice_memory.touch(hit.get("choice_id") or "")
+        return {"confirm": True}
+    return None
 
 
 def read_pending_wash():
@@ -255,27 +299,33 @@ def _finish_table(ctx, parsed):
             )
             has_data = orig_nonempty > 0
             confirm = (ctx["data"].get("wash_confirm") or {}).get(tname)
+            do_wash = False
             if not has_data:
-                # 空表：不动（不洗、不问）
                 pass
-            elif confirm is None:
-                # 先问用户：要不要二次洗？并记下"等回答"
-                _ask_wash(ctx, tname, original, "未自动清洗")
-                write_pending_wash(parsed.get("path") or "", tname)
-            elif not confirm:
-                # 用户说不洗：不动（保留原表）
+            elif confirm is False:
                 clear_pending_wash()
+            elif confirm is True:
+                do_wash = True
             else:
-                # 用户确认要洗：先备份，再洗
+                remembered = _remembered_wash_action(parsed, tname, original)
+                if remembered and remembered.get("table") is not None:
+                    table = remembered["table"]
+                elif remembered and remembered.get("confirm") is False:
+                    pass
+                elif remembered and remembered.get("confirm") is True:
+                    do_wash = True
+                else:
+                    _ask_wash(ctx, tname, original, "未自动清洗")
+                    write_pending_wash(
+                        parsed.get("path") or "", tname, parsed.get("hash") or "")
+            if do_wash:
                 clear_pending_wash()
                 ctx["data"].setdefault("tables_original", {})[tname] = original
                 washed = table_normalizer.normalize_second_pass(original)
                 if not washed.get("columns"):
-                    # 洗成空：保留原表 + 报警 + 再问
                     ctx["data"].setdefault("wash_rejected", []).append(
                         {"table": tname, "reason": "washed_to_empty"})
                     _ask_wash(ctx, tname, original, "洗成空，已保留原表")
-                    # 可选重后续（默认关）：显式开启且配了 Key，才让模型尝试恢复
                     if config.get_param("table_recover.on_wash_rejected", False):
                         api_key = ctx.get("api_key") or ""
                         if api_key:
@@ -287,24 +337,24 @@ def _finish_table(ctx, parsed):
                 else:
                     washed_rows = len(washed.get("rows") or [])
                     if first.get("shape") == "headerless" or not washed.get("recognized"):
-                        # 几何清洗救不了无表头（不会猜语义）→ 不采信，保留原表 + 报警 + 问
                         ctx["data"].setdefault("wash_rejected", []).append(
                             {"table": tname, "reason": "still_unrecognized"})
                         _ask_wash(ctx, tname, original, "洗了但仍认不出表头")
                     elif orig_nonempty >= 4 and washed_rows < orig_nonempty * 0.5:
-                        # 洗坏但没变空：非空行骤减 → 不采信，保留原表 + 报警 + 再问
                         ctx["data"].setdefault("wash_rejected", []).append(
                             {"table": tname, "reason": "rows_shrunk",
                              "orig_rows": orig_nonempty, "washed_rows": washed_rows})
                         _ask_wash(ctx, tname, original,
                                   "非空行骤减（%d→%d）" % (orig_nonempty, washed_rows))
                     else:
-                        # 洗完非空：用洗后的
                         table = washed
                         _issues = table_normalizer.consistency_issues(table)
                         if _issues:
                             ctx["data"].setdefault("structure_issues", []).append(
                                 {"table": tname, "issues": _issues})
+                        _remember_wash(
+                            parsed.get("path") or "", tname,
+                            parsed.get("hash") or "", "wash")
     profile = table_engine.profile_table(table)
     cache_db.init_cache_tables()
     if not cache_db.get_table_profile(parsed["path"], parsed["mtime"]):

@@ -15,7 +15,7 @@
 | **L0**（确定性） | ✅ | = **A 级** + `replace` / `inspect` |
 | **L1**（轻 AI） | ✅ | = **B 级** + `l1` |
 | **L2**（跨结构语义） | ✅ **已做** | **表↔叙述 双向**（`table_to_text`/`text_to_table`）+ **表↔大纲 双向**（`table_to_outline`/`outline_to_table`）+ `outline` |
-| **L3**（事务层） | ⚠️ **部分** | `tracked_change`（`w:del`/`w:ins`）+ **dry-run/回滚**（`.bak` 恢复）已做；**正式事务层**未做 |
+| **L3**（事务层） | ✅ **最小版** | `txn.begin` 快照 + 失败整包还原；真 dry-run（临时副本）；链逆序补偿 → `compensation_failed`/`rollback_failed` 接 UI |
 | **九对象** | ✅ **9/9（全用）** | `objects.py`：Intent/DocumentState/Plan/**PatchSet**/**ToolRegistry**/**CapabilityManifest**/**ConfirmationOverlay**/**IntermediateArtifact**/**RedactionPolicy** |
 | **七状态机** | ✅ **7/7** | `done`/`failed`/`partially_completed`/`plan_invalidated`/`failed_postcheck`/`compensation_failed`/`rollback_failed` |
 | **决策表** | ✅ **规则表** | 契约 `word_office.decision_rules`（`_decide_tier` 读契约） |
@@ -78,10 +78,10 @@
 
 | 项 | 说明 |
 |---|---|
-| **正式事务层**（L3） | `dry_run` 是"先改再还原"的别名，非真 dry-run；回滚依赖 `.bak`/独立备份 |
-| **批注 / 控件 / 交叉引用**（读能力） | 未做（`tracked_change` 已做，但批注 API 等未做） |
+| **正式事务层**（L3） | ✅ 最小版已做（`pipeline/word_office/txn.py`）；非 DB 事务、非 v4 |
+| **批注 / 控件 / 交叉引用** | ⚠️ **三者只读；写仍拒** | `list_comments` / `list_controls` / `list_fields`（含 REF/PAGEREF）已做（正文）；书签仍只布尔；**写**批注/控件/字段仍拒 |
 | **记忆语义召回** | 无 embedding 时 `recall` 两路字面（FTS5 + LIKE） |
-| **记忆学习**（用户纠正→记） | 未做 |
+| **记忆学习**（用户纠正→记） | ⚠️ **仅洗表/表头** | 写入 `memory_choice`；可说「忘记这次洗表选择」revoke。Excel/Word 两套记忆**有意分开** |
 | **`move` 带完整句 / 跨段** | 未做（现在 run 级带标点） |
 | **`outline` 自动重排** | 未做（只提示"编号需手工核对"） |
 | **UI 自动化（pytest-qt）** | 只有"构造 + dispatch worker"冒烟 |
@@ -90,6 +90,7 @@
 
 ## 五、结论
 
-> **Word 模块 = 规格的"可写回部分"已落地**：
-> **op 6/6（run 级）、九对象 9/9、七状态机 7/7、决策表规则化、记忆/召回、GUI 确认**。
-> **没做的是"跨结构/事务层/preflight/分片路由"**——**规格自己也说"后置"**。
+> **Word 模块 = 可写回 + 事务最小版 + 批注/控件/字段只读已落地**：
+> **op 写回齐、九对象 9/9、七状态机 7/7、决策表规则化、记忆/召回、GUI 确认、`list_comments` / `list_controls` / `list_fields`**。
+> **仍缺**：写批注/写控件/写字段；`move` 跨段；`outline` 自动编号；pytest-qt（明确不做）。
+> **D/E Report**：✅ 严闸门已接（`pipeline/word_office/report.py`）；A/B/C 与只读不出。

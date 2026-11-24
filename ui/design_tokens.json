@@ -1,0 +1,36 @@
+{
+  "color": {
+    "shell": "#f7f8fa",
+    "sidebar": "#f0f2f5",
+    "surface": "#ffffff",
+    "border": "#eceef1",
+    "borderStrong": "#e6e8eb",
+    "text": "#1f2329",
+    "textMuted": "#6b7280",
+    "textFaint": "#9aa0a6",
+    "accent": "#4d6bfe",
+    "accentSoft": "#eef2ff",
+    "success": "#067647",
+    "danger": "#b42318",
+    "dangerSoft": "#fff5f4",
+    "warnSoft": "#fffbeb",
+    "dropSoft": "#f5f8ff",
+    "chipBg": "#f2f4f7",
+    "codeBg": "#f3f4f6"
+  },
+  "radius": {
+    "sm": 8,
+    "md": 10,
+    "lg": 14
+  },
+  "space": {
+    "xs": 4,
+    "sm": 8,
+    "md": 12
+  },
+  "font": {
+    "ui": "12.5px",
+    "chat": "13.5px",
+    "mono": "Consolas, 'Cascadia Mono', 'Sarasa Mono SC', monospace"
+  }
+}

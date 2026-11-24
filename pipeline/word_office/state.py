@@ -11,11 +11,19 @@ import json
 from pathlib import Path
 
 from docx import Document
+from docx.oxml.ns import qn
 from lxml import etree
 
 
 def _xml(doc) -> str:
     return etree.tostring(doc.element.body, encoding="unicode")
+
+
+# w:sdtPr 里常见类型节点（缺省当 richText）
+_SDT_TYPE_TAGS = (
+    "text", "richText", "comboBox", "dropDownList", "date", "checkbox",
+    "docPartObj", "citation", "group", "picture", "repeatingSection",
+)
 
 
 def file_sha256(path: Path) -> str:
@@ -51,12 +59,18 @@ def scan(path: Path) -> dict:
         tables.append({"rows": nrows, "cols": ncols, "merged": merged})
 
     xml = _xml(doc)
+    comments = list_comments(path, doc=doc)
+    controls = list_controls(path, doc=doc)
+    fields = list_fields(path, doc=doc)
     result = {
         "path": str(path),
         "paragraphs": len(paragraphs),
         "styles": styles,
         "tables": tables,
         "inline_shapes": len(doc.inline_shapes),
+        "comment_count": len(comments),
+        "control_count": len(controls),
+        "field_count": len(fields),
         "has_revision": ("<w:ins " in xml) or ("<w:del " in xml),
         "has_control": "<w:sdt" in xml,
         "has_field": ("<w:fldSimple" in xml) or ("<w:instrText" in xml),
@@ -65,6 +79,147 @@ def scan(path: Path) -> dict:
     }
     result["structure_sha256"] = structure_sha256(result)
     return result
+
+
+def list_comments(path: Path, *, doc=None, limit: int = 50) -> list[dict]:
+    """只读批注。不写文件。写批注仍拒。"""
+    if doc is None:
+        doc = Document(str(path))
+    out = []
+    try:
+        bag = getattr(doc, "comments", None)
+        items = list(bag) if bag is not None else []
+    except Exception:  # noqa: BLE001
+        return []
+    for c in items[: max(0, int(limit))]:
+        out.append({
+            "author": str(getattr(c, "author", "") or ""),
+            "text": str(getattr(c, "text", "") or "").strip(),
+        })
+    return out
+
+
+def list_controls(path: Path, *, doc=None, limit: int = 50) -> list[dict]:
+    """只读内容控件（w:sdt）。不写文件；写控件仍拒。
+
+    只扫正文 body（不含页眉页脚），与批注只读同一「能读多少算多少、读不出明示」原则。
+    """
+    if doc is None:
+        doc = Document(str(path))
+    out: list[dict] = []
+    try:
+        body = doc.element.body
+    except Exception:  # noqa: BLE001
+        return []
+    cap = max(0, int(limit))
+    for sdt in body.iter(qn("w:sdt")):
+        if len(out) >= cap:
+            break
+        pr = sdt.find(qn("w:sdtPr"))
+        alias = ""
+        tag = ""
+        ctype = "richText"
+        if pr is not None:
+            a = pr.find(qn("w:alias"))
+            if a is not None:
+                alias = str(a.get(qn("w:val")) or "")
+            t = pr.find(qn("w:tag"))
+            if t is not None:
+                tag = str(t.get(qn("w:val")) or "")
+            for name in _SDT_TYPE_TAGS:
+                if pr.find(qn("w:%s" % name)) is not None:
+                    ctype = name
+                    break
+        content = sdt.find(qn("w:sdtContent"))
+        parts: list[str] = []
+        if content is not None:
+            for node in content.iter(qn("w:t")):
+                if node.text:
+                    parts.append(node.text)
+        text = "".join(parts).strip()
+        out.append({
+            "alias": alias,
+            "tag": tag,
+            "type": ctype,
+            "text": text,
+        })
+    return out
+
+
+def _field_kind(instr: str) -> str:
+    """指令首词：REF / PAGEREF / PAGE / DATE / HYPERLINK …"""
+    s = str(instr or "").strip()
+    if not s:
+        return "unknown"
+    token = s.split(None, 1)[0].upper().lstrip("\\")
+    return token or "unknown"
+
+
+def list_fields(path: Path, *, doc=None, limit: int = 50) -> list[dict]:
+    """只读域/字段（含交叉引用 REF/PAGEREF）。不写文件；不更新域结果。
+
+    覆盖：`w:fldSimple` + 复杂域（fldChar begin/separate/end + instrText）。
+    只扫正文；嵌套域扁平列出（能读多少算多少）。
+    """
+    if doc is None:
+        doc = Document(str(path))
+    out: list[dict] = []
+    try:
+        body = doc.element.body
+    except Exception:  # noqa: BLE001
+        return []
+    cap = max(0, int(limit))
+
+    for el in body.iter(qn("w:fldSimple")):
+        if len(out) >= cap:
+            return out
+        instr = str(el.get(qn("w:instr")) or "").strip()
+        parts = [t.text for t in el.iter(qn("w:t")) if t.text]
+        text = "".join(parts).strip()
+        out.append({
+            "kind": _field_kind(instr),
+            "instr": instr,
+            "text": text,
+            "form": "simple",
+        })
+
+    mode = None  # None | instr | result
+    instr_parts: list[str] = []
+    result_parts: list[str] = []
+    for el in body.iter():
+        if len(out) >= cap:
+            break
+        tag = el.tag
+        if tag == qn("w:fldChar"):
+            ftype = el.get(qn("w:fldCharType"))
+            if ftype == "begin":
+                mode = "instr"
+                instr_parts = []
+                result_parts = []
+            elif ftype == "separate" and mode == "instr":
+                mode = "result"
+            elif ftype == "end" and mode is not None:
+                instr = "".join(instr_parts).strip()
+                text = "".join(result_parts).strip()
+                if instr or text:
+                    out.append({
+                        "kind": _field_kind(instr),
+                        "instr": instr,
+                        "text": text,
+                        "form": "complex",
+                    })
+                mode = None
+                instr_parts = []
+                result_parts = []
+        elif mode == "instr" and tag == qn("w:instrText"):
+            if el.text:
+                instr_parts.append(el.text)
+            if el.tail:
+                instr_parts.append(el.tail)
+        elif mode == "result" and tag == qn("w:t"):
+            if el.text:
+                result_parts.append(el.text)
+    return out[:cap]
 
 
 def predicates(state: dict) -> dict:

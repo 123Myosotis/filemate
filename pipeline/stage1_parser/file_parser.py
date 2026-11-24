@@ -16,7 +16,9 @@ import zipfile  # 标准库读 DOCX（docx 本质是 zip）
 from pathlib import Path
 
 # 可解析为纯文本的扩展名 / 可解析为表格的扩展名
-TEXT_EXTS = {".txt", ".md", ".markdown", ".docx", ".pdf", ".rtf", ".log", ".pptx"}
+TEXT_EXTS = {
+    ".txt", ".md", ".markdown", ".docx", ".docm", ".pdf", ".rtf", ".log", ".pptx",
+}
 TABLE_EXTS = {".csv", ".tsv", ".xlsx", ".xls"}
 
 
@@ -103,9 +105,17 @@ def parse_file(path) -> dict:
         info["text"] = raw.decode("utf-8", errors="replace")
         return info
 
-    if ext == ".docx":
+    if ext in (".docx", ".docm"):
+        # .docm 同为 OOXML zip；只抽文本，不执行宏
         info["kind"] = "text"
         info["text"] = _docx_to_text(raw)
+        if ext == ".docm":
+            info["note"] = "macro_docm"
+        return info
+
+    if ext == ".doc":
+        # 老格式不在此直接解析；由 content_split.legacy_word 可选 COM 转换
+        info["note"] = "legacy_doc_no_converter"
         return info
 
     if ext == ".pptx":

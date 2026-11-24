@@ -302,8 +302,29 @@ def _get_vec(hash: str) -> list:
         conn.close()
 
 
+_VEC_FULL_SCAN_MAX = 128  # 超过才预筛；小库仍全量，保住「字面 miss、语义命中」
+
+
+def _recent_vec_hashes(limit: int) -> list[str]:
+    init_memory()
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT v.hash FROM memory_vec v "
+            "LEFT JOIN memory_file f ON f.hash=v.hash "
+            "ORDER BY COALESCE(f.last_used, v.created_at) DESC LIMIT ?",
+            (int(limit),),
+        ).fetchall()
+        return [r["hash"] for r in rows]
+    finally:
+        conn.close()
+
+
 def _vec_hits(q: str, k: int) -> list[str]:
-    """向量通道：query → embed → 与库内向量算余弦。**没 Key 返回空**。"""
+    """向量通道：query → embed → 余弦。**没 Key 返回空**。
+    库大于 `_VEC_FULL_SCAN_MAX` 时：只对 FTS/LIKE 候选 ∪ 最近 N 条算余弦（防 O(n)）。
+    小库仍全量，避免预筛把纯语义命中滤掉。
+    """
     try:
         from ai import embed
         if not embed.is_available():
@@ -319,11 +340,17 @@ def _vec_hits(q: str, k: int) -> list[str]:
         rows = conn.execute("SELECT hash FROM memory_vec").fetchall()
     finally:
         conn.close()
+    hashes = [r["hash"] for r in rows]
+    if len(hashes) > _VEC_FULL_SCAN_MAX:
+        lexical = set(_fts_hits(q, max(k * 3, 24)) + _like_hits(q, max(k * 3, 24)))
+        recent = set(_recent_vec_hashes(_VEC_FULL_SCAN_MAX))
+        narrowed = [h for h in hashes if h in lexical or h in recent]
+        hashes = narrowed or list(recent)
     scored = []
-    for r in rows:
-        v = _get_vec(r["hash"])
+    for h in hashes:
+        v = _get_vec(h)
         if v:
-            scored.append((r["hash"], embed.cosine(qv, v)))
+            scored.append((h, embed.cosine(qv, v)))
     scored.sort(key=lambda kv: -kv[1])
     return [h for h, _ in scored[:k]]
 

@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
-"""阶段 6：E 分块 + 多文件批处理 + 报告复用。"""
+"""阶段 6：E 分块 + 多文件批处理（不再依赖已收口的 构建/）。"""
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 import pytest
@@ -11,22 +10,17 @@ from docx import Document
 from pipeline.word_office.batch import run_batch
 from pipeline.word_office.chunk import split_by_heading
 
-BASE = Path(__file__).resolve().parents[1] / "构建" / "smoke" / "_e6_test"
-
 
 @pytest.fixture()
-def docx():
-    shutil.rmtree(BASE, ignore_errors=True)
-    BASE.mkdir(parents=True, exist_ok=True)
-    p = BASE / "t.docx"
+def docx(tmp_path):
+    p = tmp_path / "t.docx"
     d = Document()
     d.add_heading("第一章", level=1)
     d.add_paragraph("甲。")
     d.add_heading("第二章", level=1)
     d.add_paragraph("乙。")
     d.save(str(p))
-    yield p
-    shutil.rmtree(BASE, ignore_errors=True)
+    return p
 
 
 @pytest.fixture(autouse=True)

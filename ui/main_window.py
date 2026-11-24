@@ -1,32 +1,44 @@
 # ui/main_window.py
 """
 FileMate 主窗口
-布局：左侧对话频道（Tab，每个频道内含对话区 + 输入框 + 发送按钮）
-     右侧文件管理器 + 操作日志
+布局：左侧对话频道（Tab：一频道一工作区 + 对话区 + 输入）
+     右侧文件管理器（保留）+ 操作日志
 """
 from datetime import datetime  # 给操作日志打时间戳
 from pathlib import Path  # 路径处理（日志里显示文件名等）
 import os
 import shutil  # 撤回操作时用 shutil.move 把文件移回原位
 
-from PyQt6.QtCore import Qt, QThread, QTimer, QUrl, pyqtSignal  # Qt 常量 + 后台工作线程 + 定时器
+from PyQt6.QtCore import Qt, QEvent, QThread, QTimer, QUrl, pyqtSignal  # Qt 常量 + 后台工作线程 + 定时器
 from PyQt6.QtGui import QGuiApplication, QDesktopServices  # 屏幕尺寸 / 打开日志文件
-from PyQt6.QtGui import QColor, QPalette
+from PyQt6.QtGui import QBrush, QColor, QPalette
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,  # 主窗口与布局/分割器
     QTabWidget, QTabBar, QTextEdit, QLineEdit, QPushButton, QListWidget,  # 频道页、对话区、输入框、按钮、日志列表
     QListWidgetItem, QMenu, QMessageBox, QInputDialog, QLabel, QToolButton,  # 日志条目、右键菜单、弹窗、提示条
     QDialog, QFormLayout, QDoubleSpinBox, QSpinBox, QDialogButtonBox,
-    QComboBox, QCheckBox,
+    QComboBox, QCheckBox, QGroupBox, QFileDialog, QScrollArea, QFrame,
+    QSizePolicy,
 )
+import re as _re_ui
 
 import config  # 本地配置读写（API Key）
 from db import database as db  # SQLite 持久化：频道/消息/日志
-from engine.executor import AIFileAssistant, FileRuleEngine  # AI 助手与规则引擎
-from engine.rules import ExtensionRule, KeywordRule, DateRule  # 「整理」按钮用到的三种规则
-from engine.dispatcher import IntentDispatcher  # 意图调度器：规则优先、AI 兜底
+from engine.executor import AIFileAssistant  # AI 助手
+from engine.dispatcher import IntentDispatcher  # A 级整理走契约；查表/改 Word 走模型
+from engine.file_organize_apply import apply_moves, plan_moves, preview_text
 from ui.file_explorer import FileExplorer, get_desktop_path  # 文件管理器组件与桌面路径工具
 from ui.style import apply_app_style  # 简洁圆角主题
+from ui.entry_copy import WELCOME_HTML, INPUT_PLACEHOLDER, HELP_HTML
+from ui.chat_attachments import (
+    format_attach_note, merge_file_paths, paths_from_strings, paths_from_urls,
+)
+from ui.thinking_panel import ThinkingPanel
+from ui.round_undo import (
+    apply_file_undos, collect_from_result, empty_round, has_undoable, merge_rounds,
+)
+from ui.workspace_resolve import format_ambiguous_message, resolve_names_in_workspace
+import time as _time
 
 
 class _DispatchWorker(QThread):
@@ -58,7 +70,21 @@ class _DispatchWorker(QThread):
                 file_paths=self._file_paths or None,
                 ask_history=self._ask_history,
                 confirmed=self._confirmed)
-            self.finished_result.emit(result)
+            if not isinstance(result, dict):
+                result = {
+                    "handler": "系统",
+                    "message": "内部错误：dispatch 未返回字典（%r）。" % (type(result),),
+                    "operations": [],
+                    "tool": "error",
+                    "reason": "bad_result_type",
+                    "ok": False,
+                }
+            # 缩小跨线程载荷：明细留 message / report_paths 即可
+            slim = dict(result)
+            for heavy in ("classifications", "sections"):
+                if heavy in slim and isinstance(slim[heavy], list) and len(slim[heavy]) > 40:
+                    slim[heavy] = slim[heavy][:40]
+            self.finished_result.emit(slim)
         except Exception as e:
             self.failed.emit(str(e))
 
@@ -90,14 +116,14 @@ class MainWindow(QMainWindow):
         width = min(1350, int(screen.width() * 0.85))  # 宽度：屏幕的 85%，上限 1350
         height = min(830, int(screen.height() * 0.85))  # 高度：屏幕的 85%，上限 830
         self.resize(width, height)  # 应用计算出的窗口尺寸
-        self.setMinimumSize(760, 480)  # 最小尺寸下限，防止拖得太小导致右侧面板不可见
+        self.setMinimumSize(720, 440)  # 允许更小窗口；分割条仍可自由拖
 
         # 全局唯一的 AI 助手实例，API Key 从本地配置读取
         self.ai_assistant = AIFileAssistant(
             api_key=config.get_api_key(),
             base_dir=get_desktop_path()  # 默认操作目录为真实桌面
         )
-        # 意图调度器：规则引擎优先（零成本），AI 兜底
+        # 意图调度器：A 级整理走契约规则（0 token）；查表/改 Word 走模型
         self.dispatcher = IntentDispatcher(self.ai_assistant)
 
         self._worker = None  # 当前后台任务（防止重复发送）
@@ -110,22 +136,30 @@ class MainWindow(QMainWindow):
         self._pending_table_query = None
         self._last_progress_msg = ""
         self._last_export_path = None
+        # P1：处理中秒表（单定时器刷新当前任务频道）
+        self._run_timer = QTimer(self)
+        self._run_timer.setInterval(1000)
+        self._run_timer.timeout.connect(self._on_run_tick)
+        self._run_tab = None
+        self._run_started_at = None
 
         # ===== 菜单栏：设置 =====
         settings_menu = self.menuBar().addMenu("设置")  # 创建"设置"菜单
         # M5.2: 模型 / MaiBot / 自学习统一迁至 Web「设置」Tab；PyQt 仅保留启动器与只读提示
         api_action = settings_menu.addAction("聊天模型设置…")
         api_action.triggered.connect(self._edit_chat_model_settings)
-        test_action = settings_menu.addAction("测试智谱连通性")
+        test_action = settings_menu.addAction("测试模型连通性")
         test_action.triggered.connect(self._test_api)
         budget_action = settings_menu.addAction("预算与重试参数…")
         budget_action.triggered.connect(self._edit_budget_params)
-        mem_web_action = settings_menu.addAction("记忆纠错 Web 服务…")
-        mem_web_action.triggered.connect(self._edit_memory_correction_web)
+        web_action = settings_menu.addAction("本地 Web…")
+        web_action.triggered.connect(self._edit_local_web)  # 记忆纠错 + 跨表查询，主窗口入口
         maibot_dir_action = settings_menu.addAction("记忆 / 向量设置…")
         maibot_dir_action.triggered.connect(self._edit_memory_settings)
         clean_action = settings_menu.addAction("表格清洗设置…")
         clean_action.triggered.connect(self._edit_table_cleaning_settings)
+        cache_action = settings_menu.addAction("清理分类缓存…")
+        cache_action.triggered.connect(self._cleanup_content_cache)
 
         central_widget = QWidget()  # QMainWindow 需要一个中央部件来承载布局
         self.setCentralWidget(central_widget)
@@ -133,162 +167,423 @@ class MainWindow(QMainWindow):
         outer_layout.setContentsMargins(10, 10, 10, 10)
         outer_layout.setSpacing(8)
 
-        # ===== 主水平分割器 =====
-        self.main_h_splitter = QSplitter(Qt.Orientation.Horizontal)  # 左右可拖动的分割条
-        self.main_h_splitter.setHandleWidth(6)
-        self.main_h_splitter.setChildrenCollapsible(False)  # 防止面板被拖到完全消失
+        # ===== 主水平分割器（对话为主，资源管理可大幅拖窄/拖宽）=====
+        self.main_h_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.main_h_splitter.setHandleWidth(7)
+        self.main_h_splitter.setChildrenCollapsible(True)  # 允许收到极窄，自由缩放
 
-        # ---------- 左侧：对话频道 ----------
-        left_panel = QWidget()  # 左侧面板容器
+        # ---------- 左侧：对话频道（浅灰壳） ----------
+        left_panel = QWidget()
+        left_panel.setObjectName("chatSide")
+        left_panel.setMinimumWidth(280)  # 对话下限，仍可拖得很窄
         left_layout = QVBoxLayout(left_panel)
-        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setContentsMargins(8, 8, 4, 8)
         left_layout.setSpacing(0)
 
-        # Tab 栏 + 右侧"新建频道"按钮放在同一行，所以需要一层水平布局
-        tab_bar_widget = QWidget()
-        tab_bar_layout = QHBoxLayout(tab_bar_widget)
-        tab_bar_layout.setContentsMargins(0, 0, 0, 0)
-        tab_bar_layout.setSpacing(0)
-
-        self.chat_tabs = QTabWidget()  # 频道 Tab 容器，每个 Tab 是一套完整对话界面
-        self.chat_tabs.setTabsClosable(True)  # 每个 Tab 右侧显示 × 关闭按钮
-        self.chat_tabs.setMovable(True)  # 允许拖拽调整频道顺序
+        self.chat_tabs = QTabWidget()  # 多频道能力保留；单频道时隐藏 Tab 栏
+        self.chat_tabs.setTabsClosable(True)
+        self.chat_tabs.setMovable(True)
         self.chat_tabs.setElideMode(Qt.TextElideMode.ElideRight)
         self.chat_tabs.setUsesScrollButtons(True)
         bar = self.chat_tabs.tabBar()
         bar.setExpanding(False)
         bar.setDocumentMode(True)
-        self.chat_tabs.tabCloseRequested.connect(self._close_tab)  # 点击 × → 删除频道
-        # 启动时从数据库恢复历史频道；没有则新建一个默认频道
-        channels = db.list_channels()
-        if channels:
-            for ch_id, name in channels:
-                self.add_chat_tab(name=name, channel_id=ch_id, load_history=True)
-        else:
-            self.add_chat_tab()  # 首次启动：创建并入库
+        self.chat_tabs.tabCloseRequested.connect(self._close_tab)
+        self.chat_tabs.currentChanged.connect(self._on_channel_changed)
+        # 新建频道「+」放在 Tab 尾部，不再占每频道工作区条
+        self._tab_add_btn = QToolButton()
+        self._tab_add_btn.setObjectName("tabAdd")
+        self._tab_add_btn.setText("+")
+        self._tab_add_btn.setToolTip("新建频道（先选工作区）")
+        self._tab_add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._tab_add_btn.clicked.connect(lambda: self.add_chat_tab())
+        self.chat_tabs.setCornerWidget(self._tab_add_btn, Qt.Corner.TopRightCorner)
+        left_layout.addWidget(self.chat_tabs)
 
-        add_tab_btn = QPushButton("+")  # 新建频道按钮
-        add_tab_btn.setFixedSize(36, 32)
-        add_tab_btn.setToolTip("新建频道")
-        add_tab_btn.clicked.connect(self.add_chat_tab)  # 点击新增一个频道
-
-        help_btn = QPushButton("?")  # 帮助按钮：弹出完整使用说明
-        help_btn.setFixedSize(36, 32)
-        help_btn.setToolTip("使用说明")
-        help_btn.clicked.connect(self._show_help)
-
-        tab_bar_layout.addWidget(self.chat_tabs)  # Tab 占满左侧
-        tab_bar_layout.addWidget(add_tab_btn)  # "+" 按钮贴在 Tab 栏右边
-        tab_bar_layout.addWidget(help_btn)  # "❓" 帮助按钮再靠右
-        left_layout.addWidget(tab_bar_widget)
-
-        # ---------- 右侧：文件管理器 + 操作日志 ----------
-        right_panel = QWidget()  # 右侧面板容器
+        # ---------- 右侧：文件管理器 + 操作日志（白底） ----------
+        right_panel = QWidget()
+        right_panel.setObjectName("fileSide")
+        right_panel.setMinimumWidth(140)  # 可收到很窄；想放大资源管理时也能拖很宽
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(0)
 
         # 操作范围提示条
-        self.scope_label = QLabel()  # 显示当前整理操作将作用于哪个目录
+        self.scope_label = QLabel()
         self.scope_label.setObjectName("scopeLabel")
         right_layout.addWidget(self.scope_label)
 
-        self.right_v_splitter = QSplitter(Qt.Orientation.Vertical)  # 右侧上下分割：文件管理器 / 日志
-        self.right_v_splitter.setHandleWidth(6)
+        self.right_v_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.right_v_splitter.setHandleWidth(7)
+        self.right_v_splitter.setChildrenCollapsible(True)
 
         self.file_explorer = FileExplorer()  # 文件管理器组件
         self.file_explorer.organize_requested.connect(self._on_organize)  # 点击"整理"按钮 → 执行规则整理
         self.file_explorer.current_path_changed.connect(self._on_path_changed)  # 目录切换 → 更新操作范围提示
-        self.log_list = QListWidget()  # 操作日志列表
-        self.log_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)  # 启用自定义右键菜单
-        self.log_list.customContextMenuRequested.connect(self._show_log_menu)  # 右键 → 撤回/删除/清空菜单
-        self._load_logs()  # 启动时恢复历史日志（含已撤回记录）
+        self.file_explorer.attach_to_chat_requested.connect(self._on_explorer_attach)
 
-        self.right_v_splitter.addWidget(self.file_explorer)  # 上半部分：文件管理器
-        self.right_v_splitter.addWidget(self.log_list)  # 下半部分：操作日志
-        self.right_v_splitter.setSizes([500, 220])  # 初始高度比例 500:220
+        # P3：操作日志可折叠；分级着色 + 清空/导出
+        self.log_list = QListWidget()
+        self.log_list.setObjectName("logList")
+        self.log_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.log_list.customContextMenuRequested.connect(self._show_log_menu)
+        self._load_logs()
+
+        self._log_wrap = QFrame()
+        self._log_wrap.setObjectName("logBar")
+        log_wrap_layout = QVBoxLayout(self._log_wrap)
+        log_wrap_layout.setContentsMargins(6, 4, 6, 4)
+        log_wrap_layout.setSpacing(2)
+        log_head = QHBoxLayout()
+        log_head.setSpacing(4)
+        self._log_toggle_btn = QToolButton()
+        self._log_toggle_btn.setText("操作日志 ▾")
+        self._log_toggle_btn.setCheckable(True)
+        self._log_toggle_btn.setChecked(True)
+        self._log_toggle_btn.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self._log_toggle_btn.setStyleSheet(
+            "QToolButton { color:#57534e; font-size:12px; padding:2px 4px;"
+            " border:none; text-align:left; }"
+            "QToolButton:checked { font-weight:600; }")
+        self._log_toggle_btn.setToolTip("折叠/展开操作日志（撤回入口在这里）")
+        self._log_toggle_btn.toggled.connect(self._on_log_toggled)
+        log_clear_btn = QPushButton("清空")
+        log_clear_btn.setObjectName("logClear")
+        log_clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        log_clear_btn.setToolTip("清空全部操作日志")
+        log_clear_btn.clicked.connect(self._clear_logs)
+        log_export_btn = QPushButton("导出")
+        log_export_btn.setObjectName("logExport")
+        log_export_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        log_export_btn.setToolTip("导出为操作日志.docx")
+        log_export_btn.clicked.connect(self._export_logs_docx)
+        log_head.addWidget(self._log_toggle_btn, 1)
+        log_head.addWidget(log_clear_btn)
+        log_head.addWidget(log_export_btn)
+        log_wrap_layout.addLayout(log_head)
+        log_wrap_layout.addWidget(self.log_list, 1)
+
+        self.right_v_splitter.addWidget(self.file_explorer)
+        self.right_v_splitter.addWidget(self._log_wrap)
+        self.file_explorer.setMinimumHeight(80)
+        self._log_wrap.setMinimumHeight(28)
+        self.right_v_splitter.setStretchFactor(0, 4)
+        self.right_v_splitter.setStretchFactor(1, 1)
+        self.right_v_splitter.setSizes([420, 100])
+        self._log_expanded_sizes = [420, 100]
         right_layout.addWidget(self.right_v_splitter)
 
-        self.main_h_splitter.addWidget(left_panel)  # 左：对话频道
-        self.main_h_splitter.addWidget(right_panel)  # 右：文件管理器 + 日志
-        self.main_h_splitter.setSizes([500, 790])  # 初始宽度比例 500:790
+        self.main_h_splitter.addWidget(left_panel)
+        self.main_h_splitter.addWidget(right_panel)
+        # 默认对话约 68%、资源管理约 32%；拉伸时对话优先变宽
+        self.main_h_splitter.setStretchFactor(0, 3)
+        self.main_h_splitter.setStretchFactor(1, 1)
+        chat_w = max(int(width * 0.68), 420)
+        right_w = max(width - chat_w - 24, 220)
+        self.main_h_splitter.setSizes([chat_w, right_w])
 
-        outer_layout.addWidget(self.main_h_splitter)  # 分割器铺满整个中央区域
+        outer_layout.addWidget(self.main_h_splitter)
 
-        # 窗口显示后自动聚焦到第一个频道的输入框
-        # 使用 QTimer.singleShot 延迟到窗口完全渲染后再设置焦点
-        from PyQt6.QtCore import QTimer
-        QTimer.singleShot(100, self._focus_first_tab_input)  # 100ms 后聚焦，避免焦点被窗口初始化抢走
+        # 启动恢复频道（批量恢复时不弹工作区框，避免连弹）
+        self._restoring_channels = True
+        try:
+            channels = db.list_channels()
+            if channels:
+                for row in channels:
+                    ch_id, name = row[0], row[1]
+                    ws = row[2] if len(row) > 2 else None
+                    self.add_chat_tab(
+                        name=name, channel_id=ch_id, load_history=True,
+                        workspace_path=ws, pick_workspace=False)
+            else:
+                self.add_chat_tab(pick_workspace=True)
+        finally:
+            self._restoring_channels = False
+
+        # 当前频道：缺工作区则打开就弹；再同步资源管理器
+        QTimer.singleShot(0, self._bootstrap_active_workspace)
+        QTimer.singleShot(100, self._focus_first_tab_input)
 
     def _focus_first_tab_input(self):
         """窗口启动后聚焦第一个频道的输入框"""
         self._focus_tab_input(self.chat_tabs.currentIndex())
 
-    def add_chat_tab(self, name=None, channel_id=None, load_history=False):
-        """
-        新增一个聊天频道。
-        每个频道内部自带：对话显示区（只读）+ 输入框 + 发送按钮，
-        输入框默认获得焦点，点击频道即可直接打字。
+    def _bootstrap_active_workspace(self):
+        """启动后：当前频道缺工作区则立刻弹选；再同步资源管理器。"""
+        idx = self.chat_tabs.currentIndex()
+        tab = self.chat_tabs.widget(idx)
+        if tab is None:
+            return
+        self._ensure_tab_workspace(tab, required=True)
+        self._sync_explorer_to_tab(tab)
+
+    def _on_channel_changed(self, idx: int):
+        """切 Tab：聚焦 + 缺工作区则弹选 + 资源管理器跟到该频道工作区。"""
+        self._focus_tab_input(idx)
+        if getattr(self, "_restoring_channels", False):
+            return
+        tab = self.chat_tabs.widget(idx)
+        if tab is None:
+            return
+        self._ensure_tab_workspace(tab, required=False)
+        self._sync_explorer_to_tab(tab)
+
+    def _pick_workspace_dir(self, title: str, *, required: bool = False) -> Path | None:
+        """选目录作为工作区。required=True 时取消会再弹，直到选中或窗口关掉。"""
+        start = str(get_desktop_path())
+        while True:
+            path = QFileDialog.getExistingDirectory(self, title, start)
+            if path:
+                p = Path(path)
+                if p.is_dir():
+                    return p
+                QMessageBox.warning(self, "工作区无效", "请选择一个存在的文件夹。")
+                continue
+            if not required:
+                return None
+            # 必须有工作区才能用：再提示一次
+            ans = QMessageBox.question(
+                self, "需要工作区",
+                "每个频道必须先选择工作区才能对话。\n是否重新选择？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if ans != QMessageBox.StandardButton.Yes:
+                # 仍 required：继续循环，避免无工作区空窗
+                continue
+
+    def _ensure_tab_workspace(self, tab, *, required: bool = False) -> bool:
+        """频道无有效工作区则弹选；取消则禁用发送。"""
+        ws = str(tab.property("workspace_path") or "").strip()
+        if ws and Path(ws).is_dir():
+            self._apply_workspace_gate(tab)
+            return True
+        picked = self._pick_workspace_dir(
+            "请为本频道选择工作区",
+            required=required,
+        )
+        if not picked:
+            tab.setProperty("workspace_path", "")
+            self._refresh_workspace_label(tab)
+            self._apply_workspace_gate(tab)
+            return False
+        ws = str(picked)
+        tab.setProperty("workspace_path", ws)
+        channel_id = tab.property("channel_id")
+        if channel_id is not None:
+            db.set_channel_workspace(channel_id, ws)
+        self._refresh_workspace_label(tab)
+        self._apply_workspace_gate(tab)
+        return True
+
+    def _change_workspace(self, tab):
+        """更换本频道工作区（不新建频道）。"""
+        picked = self._pick_workspace_dir("更换本频道工作区", required=False)
+        if not picked:
+            return
+        ws = str(picked)
+        tab.setProperty("workspace_path", ws)
+        channel_id = tab.property("channel_id")
+        if channel_id is not None:
+            db.set_channel_workspace(channel_id, ws)
+        self._refresh_workspace_label(tab)
+        self._apply_workspace_gate(tab)
+        if tab is self.chat_tabs.currentWidget():
+            self._sync_explorer_to_tab(tab)
+
+    def _refresh_workspace_label(self, tab):
+        label = tab.property("workspace_label")
+        ws = str(tab.property("workspace_path") or "").strip()
+        if label is None:
+            return
+        if ws and Path(ws).is_dir():
+            label.setText("工作区：%s" % ws)
+        else:
+            label.setText("工作区：未选择（请先选择文件夹）")
+
+    def _apply_workspace_gate(self, tab):
+        """无工作区：禁用输入/发送（打开就闸住，避免误发）。"""
+        ws = str(tab.property("workspace_path") or "").strip()
+        ok = bool(ws and Path(ws).is_dir())
+        input_box = tab.property("input_box")
+        send_btn = tab.property("send_btn")
+        if input_box is not None:
+            input_box.setEnabled(ok)
+            input_box.setPlaceholderText(
+                INPUT_PLACEHOLDER if ok else "请先选择本频道工作区…")
+        if send_btn is not None:
+            send_btn.setEnabled(ok)
+        status = tab.property("status_label")
+        if status is not None and not ok:
+            status.setText("请先选择工作区，才能发送指令。")
+            status.show()
+        elif status is not None and ok and "工作区" in (status.text() or ""):
+            status.hide()
+
+    def _sync_explorer_to_tab(self, tab):
+        """资源管理器跳到该频道工作区根（保留资源管理器，只同步范围）。"""
+        ws = str(tab.property("workspace_path") or "").strip()
+        if ws and Path(ws).is_dir():
+            self.file_explorer.load_directory(ws)
+            self._on_path_changed(ws)
+        else:
+            self._on_path_changed("此电脑")
+
+    def add_chat_tab(self, name=None, channel_id=None, load_history=False,
+                     workspace_path=None, pick_workspace=True):
+        """新增聊天频道。新建时强迫先选工作区；取消且已有其它频道则不建。
 
         参数:
-            name: Tab 显示名（恢复历史频道时传入）
-            channel_id: 数据库频道 id；None 表示新建频道，会插入 channels 表
-            load_history: 是否从数据库恢复该频道的历史消息
+            name / channel_id / load_history: 恢复历史用
+            workspace_path: 已存工作区（恢复时传入）
+            pick_workspace: 新建时是否立刻弹目录框（默认 True）
         """
-        tab = QWidget()  # 一个频道就是一个 QWidget 页面
-        layout = QVBoxLayout(tab)  # 页面内垂直布局：上对话区，下输入行
-        layout.setContentsMargins(6, 6, 6, 6)  # 四周留 6px 内边距，避免贴边
-        layout.setSpacing(6)
+        tab_name = name or self._next_channel_name()
+        ws_path = str(workspace_path).strip() if workspace_path else ""
+        if ws_path and not Path(ws_path).is_dir():
+            ws_path = ""
 
-        chat_display = QTextEdit()  # 对话显示区
-        chat_display.setReadOnly(True)  # 只读，防止用户误改历史记录
+        # 新建：先选工作区，取消则不建（若已无频道则死循环直到选中）
+        if channel_id is None and pick_workspace:
+            picked = self._pick_workspace_dir(
+                "选择本频道工作区",
+                required=(self.chat_tabs.count() == 0),
+            )
+            if not picked:
+                return None
+            ws_path = str(picked)
+
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(10)
+
+        # 工作区顶条：路径 | 新建频道 | 使用说明 | 定位 | 更换
+        ws_row = QHBoxLayout()
+        ws_row.setContentsMargins(0, 0, 0, 0)
+        ws_row.setSpacing(6)
+        ws_label = QLabel()
+        ws_label.setObjectName("workspaceLabel")
+        ws_label.setWordWrap(True)
+        ws_label.setStyleSheet("color:#6b7280; font-size:11.5px; padding:2px 0;")
+        help_btn = QPushButton("使用说明")
+        help_btn.setFixedHeight(28)
+        help_btn.setToolTip("查看完整使用说明")
+        ws_home_btn = QPushButton("定位工作区")
+        ws_home_btn.setFixedHeight(28)
+        ws_home_btn.setToolTip("资源管理器回到本频道工作区根目录")
+        ws_btn = QPushButton("更换工作区")
+        ws_btn.setFixedHeight(28)
+        ws_btn.setToolTip("只改本频道工作区；不新建频道")
+        ws_row.addWidget(ws_label, 1)
+        ws_row.addWidget(help_btn)
+        ws_row.addWidget(ws_home_btn)
+        ws_row.addWidget(ws_btn)
+
+        chat_card = QFrame()
+        chat_card.setObjectName("chatCard")
+        chat_card_layout = QVBoxLayout(chat_card)
+        chat_card_layout.setContentsMargins(8, 8, 8, 4)
+        chat_card_layout.setSpacing(4)
+
+        chat_display = QTextEdit()
+        chat_display.setObjectName("chatDisplay")
+        chat_display.setReadOnly(True)
+        chat_display.setFrameShape(QFrame.Shape.NoFrame)
+        chat_display.document().setDocumentMargin(12)
+        chat_display.setViewportMargins(8, 4, 8, 4)
         pal = chat_display.palette()
-        pal.setColor(QPalette.ColorRole.Highlight, QColor("#facc15"))
-        pal.setColor(QPalette.ColorRole.HighlightedText, QColor("#18181b"))
+        pal.setColor(QPalette.ColorRole.Highlight, QColor("#dbe4ff"))
+        pal.setColor(QPalette.ColorRole.HighlightedText, QColor("#1f2329"))
         chat_display.setPalette(pal)
 
-        # 恢复历史消息；若该频道没有历史（或首次使用），显示欢迎引导
         history = db.list_messages(channel_id) if (load_history and channel_id is not None) else []
         if history:
             for sender, content in history:
                 self._append_bubble(chat_display, content, sender)
         else:
-            chat_display.setHtml(
-                "<div style='color:#6b7280; line-height:1.7; padding:8px'>"
-                "<div style='font-size:15px; color:#111827; font-weight:600; margin-bottom:8px'>FileMate</div>"
-                "在下方用自然语言下达指令，例如：<br>"
-                "· 把 PDF 移到「文档」文件夹<br>"
-                "· 按规则合成 Excel / CSV 并导出到本目录<br>"
-                "· 帮我把这个目录下的漏扫记录整理成一个表（跨表查询）<br>"
-                "<br>右侧进入目标目录后再发送。点右上角 <b>?</b> 看说明。"
-                "</div>"
-            )
+            chat_display.setHtml(WELCOME_HTML)
+
+        thinking = ThinkingPanel()
+        # 信号在 tab 建好后连接（见下方）
 
         status_label = QLabel("")
         status_label.setObjectName("queryStatus")
         status_label.setWordWrap(True)
         status_label.setStyleSheet(
-            "color:#57534e; font-size:12px; padding:2px 4px;"
+            "color:#64748b; font-size:11.5px; padding:2px 4px;"
         )
         status_label.hide()
 
-        input_row = QHBoxLayout()  # 底部输入行：输入框 + 发送/结束 + 重新 + 导出
+        chat_card_layout.addWidget(chat_display, 1)
+        chat_card_layout.addWidget(thinking)
+        chat_card_layout.addWidget(status_label)
+
+        # 输入区卡片：平时无虚线；拖入时高亮 Drop Zone
+        input_card = QFrame()
+        input_card.setObjectName("inputCard")
+        input_card.setProperty("dropActive", False)
+        # 供拖拽高亮精确定位（平时无虚线框）
+        tab.setProperty("input_card", input_card)
+        input_outer = QVBoxLayout(input_card)
+        input_outer.setContentsMargins(8, 6, 8, 8)
+        input_outer.setSpacing(4)
+
+        # P2：附件条（拖入对话 / 附加按钮）
+        attach_frame = QFrame()
+        attach_frame.setObjectName("attachBar")
+        attach_outer = QVBoxLayout(attach_frame)
+        attach_outer.setContentsMargins(10, 4, 8, 4)
+        attach_outer.setSpacing(2)
+        attach_head = QHBoxLayout()
+        attach_head.setSpacing(4)
+        attach_hint = QLabel("拖入文件，或点「附加」")
+        attach_hint.setObjectName("attachHint")
+        attach_btn = QPushButton("附加")
+        attach_btn.setObjectName("attachBtn")
+        attach_btn.setFixedHeight(24)
+        attach_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        attach_clear = QPushButton("清空")
+        attach_clear.setObjectName("attachClear")
+        attach_clear.setFixedHeight(24)
+        attach_clear.setCursor(Qt.CursorShape.PointingHandCursor)
+        attach_head.addWidget(attach_hint, 1)
+        attach_head.addWidget(attach_btn)
+        attach_head.addWidget(attach_clear)
+        chips_host = QWidget()
+        chips_layout = QHBoxLayout(chips_host)
+        chips_layout.setContentsMargins(0, 0, 0, 0)
+        chips_layout.setSpacing(4)
+        chips_scroll = QScrollArea()
+        chips_scroll.setWidgetResizable(True)
+        chips_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        chips_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        chips_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        chips_scroll.setFixedHeight(30)
+        chips_scroll.setWidget(chips_host)
+        attach_outer.addLayout(attach_head)
+        attach_outer.addWidget(chips_scroll)
+
+        input_row = QHBoxLayout()
+        input_row.setSpacing(8)
         input_box = QLineEdit()
-        input_box.setPlaceholderText("输入消息，回车发送...")
-        input_box.setMinimumHeight(36)
+        input_box.setPlaceholderText(INPUT_PLACEHOLDER)
+        input_box.setMinimumHeight(40)
         send_btn = QPushButton("发送")
         send_btn.setObjectName("btnSend")
-        send_btn.setMinimumHeight(36)
-        send_btn.setFixedWidth(80)
+        send_btn.setMinimumHeight(40)
+        send_btn.setFixedWidth(64)
+        send_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         resume_btn = QPushButton("重新")
         resume_btn.setObjectName("btnResume")
-        resume_btn.setMinimumHeight(36)
-        resume_btn.setFixedWidth(80)
+        resume_btn.setMinimumHeight(40)
+        resume_btn.setFixedWidth(64)
         resume_btn.hide()
-        export_btn = QPushButton("导出为 Excel")
+        export_btn = QPushButton("导出 Excel")
         export_btn.setObjectName("btnExportQuery")
-        export_btn.setMinimumHeight(36)
-        export_btn.setFixedWidth(110)
+        export_btn.setMinimumHeight(40)
+        export_btn.setFixedWidth(104)
         export_btn.hide()
         export_btn.setToolTip("打开最近一次跨表查询导出的结果表")
         input_row.addWidget(input_box)
@@ -296,25 +591,45 @@ class MainWindow(QMainWindow):
         input_row.addWidget(resume_btn)
         input_row.addWidget(export_btn)
 
-        layout.addWidget(chat_display, 1)
-        layout.addWidget(status_label)
-        layout.addLayout(input_row)
+        input_outer.addWidget(attach_frame)
+        input_outer.addLayout(input_row)
 
-        tab_name = name or self._next_channel_name()
+        layout.addLayout(ws_row)
+        layout.addWidget(chat_card, 1)
+        layout.addWidget(input_card)
+
         index = self.chat_tabs.addTab(tab, tab_name)
         self._attach_tab_close(index)
         self.chat_tabs.setCurrentIndex(index)
+        self._sync_tab_bar_visibility()
 
         if channel_id is None:
-            channel_id = db.add_channel(tab_name)
+            channel_id = db.add_channel(tab_name, workspace_path=ws_path or None)
+        elif ws_path:
+            db.set_channel_workspace(channel_id, ws_path)
+
         tab.setProperty("channel_id", channel_id)
+        tab.setProperty("workspace_path", ws_path or "")
+        tab.setProperty("workspace_label", ws_label)
         tab.setProperty("send_btn", send_btn)
         tab.setProperty("resume_btn", resume_btn)
         tab.setProperty("export_btn", export_btn)
         tab.setProperty("input_box", input_box)
         tab.setProperty("chat_display", chat_display)
         tab.setProperty("status_label", status_label)
+        tab.setProperty("thinking_panel", thinking)
+        tab.setProperty("attach_chips_layout", chips_layout)
+        tab.setProperty("input_card", input_card)
         tab.setProperty("export_path", "")
+        tab.attach_paths = []  # 本频道待发送附件（不入库）
+        tab.round_undo = empty_round()  # 最近一轮可撤回快照（接入层）
+
+        self._refresh_workspace_label(tab)
+        self._apply_workspace_gate(tab)
+        self._rebuild_attach_chips(tab)
+
+        thinking.abort_clicked.connect(lambda t=tab: self._on_abort_thinking(t))
+        thinking.undo_clicked.connect(lambda t=tab: self._on_undo_round(t))
 
         send_btn.clicked.connect(
             lambda: self._on_primary_btn(chat_display, input_box, send_btn, resume_btn))
@@ -324,15 +639,34 @@ class MainWindow(QMainWindow):
             lambda: self._on_primary_btn(chat_display, input_box, send_btn, resume_btn))
         export_btn.clicked.connect(
             lambda _checked=False, t=tab: self._open_query_export(t))
+        help_btn.clicked.connect(self._show_help)
+        ws_btn.clicked.connect(lambda _checked=False, t=tab: self._change_workspace(t))
+        ws_home_btn.clicked.connect(lambda _checked=False, t=tab: self._sync_explorer_to_tab(t))
+        attach_btn.clicked.connect(lambda _checked=False, t=tab: self._pick_attachments(t))
+        attach_clear.clicked.connect(lambda _checked=False, t=tab: self._clear_attachments(t))
         input_box.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self.chat_tabs.currentChanged.connect(lambda idx: self._focus_tab_input(idx))
+
+        # 拖入：对话区 / 视口 / 附件条 / 输入框 / 输入卡片（须 DragMove）
+        drop_targets = [
+            chat_display, chat_display.viewport(), attach_frame,
+            chips_scroll, chips_scroll.viewport(), input_box, input_card,
+        ]
+        for w in drop_targets:
+            w.setAcceptDrops(True)
+            w.installEventFilter(self)
+        return tab
+
+    def _sync_tab_bar_visibility(self) -> None:
+        """单频道隐藏 Tab 栏；多频道才显示（+ 始终在角上）。"""
+        n = self.chat_tabs.count()
+        self.chat_tabs.tabBar().setVisible(n > 1)
 
     def _attach_tab_close(self, index: int):
-        """关闭钮作为标签内部件，避免原生叉画到标签框外。"""
+        """关闭钮作为标签内部件；热区 24px。"""
         btn = QToolButton(self.chat_tabs.tabBar())
         btn.setObjectName("tabClose")
         btn.setText("×")
-        btn.setFixedSize(16, 16)
+        btn.setFixedSize(24, 24)
         btn.setAutoRaise(True)
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         btn.clicked.connect(self._close_from_button)
@@ -380,41 +714,78 @@ class MainWindow(QMainWindow):
         self.chat_tabs.removeTab(idx)
         if channel_id is not None:
             db.delete_channel(channel_id)
-        # 全部关闭后自动新建一个空频道（番号会补最小空缺）
+        # 全部关闭后自动新建（会强迫选工作区）
         if self.chat_tabs.count() == 0:
-            self.add_chat_tab()
+            self.add_chat_tab(pick_workspace=True)
+        else:
+            self._sync_tab_bar_visibility()
+
+    @staticmethod
+    def _format_chat_body(text: str) -> str:
+        """路径 → code chip；数量加粗。不做多色。"""
+        import html as _html
+        import re as _re
+
+        escaped = _html.escape(text or "")
+
+        def _chip(m):
+            return (
+                "<span style='font-family:Consolas,Cascadia Mono,monospace;"
+                "font-size:12px;background:#f3f4f6;color:#374151;"
+                "padding:1px 6px;border-radius:6px;'>"
+                f"{m.group(0)}</span>"
+            )
+
+        # Windows 盘符 / UNC / 常见成稿相对段
+        escaped = _re.sub(
+            r"(?:[A-Za-z]:\\|\\\\)[^\s<>\"|?*]+"
+            r"|(?:桌面|内容分类|内容拆分|模板成稿)(?:[/\\][^\s<>\"|?*]+)+",
+            _chip,
+            escaped,
+        )
+        escaped = _re.sub(
+            r"(?<!\w)(\d+)(\s*(?:份|个|条|次|篇|项))",
+            r"<b>\1</b>\2",
+            escaped,
+        )
+        return escaped.replace("\n", "<br>")
+
+    @staticmethod
+    def _is_blocking_error(text: str) -> bool:
+        t = str(text or "")
+        keys = ("⚠️", "🔑", "失败", "无法", "未安装", "请先选", "请配置", "错误：")
+        return any(k in t for k in keys)
 
     def _append_bubble(self, chat_display, text, sender):
-        """以聊天气泡形式往对话区追加一条消息
-
-        参数:
-            text: 消息内容（纯文本，内部转义并处理换行）
-            sender: "user" 用户消息靠右、黑字加粗；"ai" FileMate 回复靠左
-        """
-        import html as _html
-        body = _html.escape(text).replace("\n", "<br>")  # 转义特殊字符，换行转 <br>
+        """往对话区追加消息：用户贴右；助手无底框；阻断错误浅条+竖线。"""
+        body = self._format_chat_body(text)
         if sender == "user":
+            long = len(text or "") > 40 or "\n" in (text or "")
+            w_attr = " width='78%'" if long else ""
             block = (
-                "<table width='100%' cellspacing='0' cellpadding='6'><tr>"
-                "<td width='22%'></td>"
-                "<td align='right'>"
-                "<div style='display:inline-block; background:#18181b; color:#fafafa;"
-                " padding:10px 14px; border-radius:14px; text-align:left;"
-                " font-weight:600; line-height:1.5'>" + body + "</div>"
-                "</td></tr></table>"
+                "<table width='100%' cellspacing='0' cellpadding='0'><tr>"
+                "<td align='right' style='padding:4px 2px 4px 12px;'>"
+                "<table" + w_attr + " cellspacing='0' cellpadding='0' align='right' "
+                "bgcolor='#f2f3f5'>"
+                "<tr><td style='padding:10px 14px; color:#1f2329; font-size:13px;"
+                " font-weight:400; line-height:1.65;'>" + body + "</td></tr>"
+                "</table></td></tr></table>"
+            )
+        elif self._is_blocking_error(text):
+            block = (
+                "<table width='100%' cellspacing='0' cellpadding='0' "
+                "style='margin:6px 0;'><tr>"
+                "<td width='3' bgcolor='#f04438'></td>"
+                "<td bgcolor='#fff5f4' style='padding:10px 12px; color:#1f2329;"
+                " line-height:1.75; font-size:13.5px;'>" + body + "</td>"
+                "</tr></table>"
             )
         else:
             block = (
-                "<table width='100%' cellspacing='0' cellpadding='6'><tr>"
-                "<td width='78%' align='left'>"
-                "<div style='display:inline-block; background:#f4f4f5; color:#1c1917;"
-                " border:1px solid #e4e4e7; padding:10px 14px; border-radius:14px;"
-                " line-height:1.55'>" + body + "</div>"
-                "</td><td width='22%'></td>"
-                "</tr></table>"
+                "<div style='max-width:720px; padding:10px 4px 18px 2px; color:#1f2329;"
+                " line-height:1.75; font-size:13.5px'>" + body + "</div>"
             )
-        chat_display.append(block)  # QTextEdit.append 支持富文本，气泡逐条堆叠
-        # 滚动到底部，保证最新消息可见
+        chat_display.append(block)
         scrollbar = chat_display.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
 
@@ -432,6 +803,340 @@ class MainWindow(QMainWindow):
         else:
             label.setText("")
             label.hide()
+
+    # ------------------------------------------------------------------
+    # P1：处理中计时（只本地秒表，不调模型）
+    # ------------------------------------------------------------------
+
+    def _start_run_timer(self, tab, base: str = "处理中") -> None:
+        self._run_tab = tab
+        self._run_started_at = _time.monotonic()
+        if tab is not None:
+            tab.setProperty("run_base_status", base)
+        if not self._run_timer.isActive():
+            self._run_timer.start()
+        self._refresh_run_status()
+
+    def _on_run_tick(self) -> None:
+        self._refresh_run_status()
+
+    def _refresh_run_status(self) -> None:
+        tab = self._run_tab
+        if tab is None or self._run_started_at is None:
+            return
+        elapsed = max(0, int(_time.monotonic() - self._run_started_at))
+        mm, ss = divmod(elapsed, 60)
+        base = str(tab.property("run_base_status") or "处理中").strip() or "处理中"
+        # 去掉旧的「· m:ss」后缀，避免叠加
+        if " · " in base:
+            base = base.split(" · ", 1)[0].strip()
+        self._set_tab_status(tab, "%s · %d:%02d" % (base, mm, ss))
+
+    def _stop_run_timer(self, tab, *, ok: bool = True) -> int:
+        """停止秒表；状态条定格「完成/结束 · 用时」。返回秒数。"""
+        if self._run_timer.isActive():
+            self._run_timer.stop()
+        elapsed = 0
+        if self._run_started_at is not None:
+            elapsed = max(0, int(_time.monotonic() - self._run_started_at))
+        mm, ss = divmod(elapsed, 60)
+        if tab is not None:
+            self._set_tab_status(
+                tab, "%s · 用时 %d:%02d" % ("完成" if ok else "结束", mm, ss))
+            panel = tab.property("thinking_panel")
+            if panel is not None:
+                panel.finish(ok=ok, elapsed=elapsed)
+        self._run_tab = None
+        self._run_started_at = None
+        return elapsed
+
+    def _thinking_begin(self, tab, first: str = "开始处理…") -> None:
+        if tab is None:
+            return
+        panel = tab.property("thinking_panel")
+        if panel is not None:
+            panel.begin(first)
+
+    def _thinking_push(self, tab, text: str) -> None:
+        if tab is None:
+            return
+        panel = tab.property("thinking_panel")
+        if panel is not None:
+            panel.push(text)
+
+    def _infer_target_from_text(self, text: str) -> str:
+        """未选目录时的兜底：只认「桌面 / 下载」，其余不猜。"""
+        t = str(text or "").lower()
+        if "桌面" in t or "desktop" in t:
+            candidate = get_desktop_path()
+        elif "下载" in t or "downloads" in t:
+            candidate = Path.home() / "Downloads"
+        else:
+            return ""
+        try:
+            return str(candidate) if Path(candidate).is_dir() else ""
+        except OSError:
+            return ""
+
+    def _on_abort_thinking(self, tab) -> None:
+        """中止当前任务：复用 TaskControl.cancel；写失败路径仍靠 Word 快照自动还原。"""
+        if tab is None:
+            return
+        if self._worker is None or not self._worker.isRunning():
+            self._thinking_push(tab, "当前没有进行中的任务")
+            return
+        if self._task_control is not None:
+            self._task_control.request_cancel()
+        self.log("进度: ⏹ 用户中止思考")
+        self._thinking_push(tab, "用户中止思考…")
+        chat = tab.property("chat_display")
+        send_btn = tab.property("send_btn")
+        resume_btn = tab.property("resume_btn")
+        if chat is not None:
+            self._append_bubble(chat, "已请求中止当前任务…", "ai")
+            channel_id = tab.property("channel_id")
+            if channel_id is not None:
+                mid = db.add_message(channel_id, "ai", "已请求中止当前任务…")
+                acc = getattr(tab, "round_undo", None) or empty_round()
+                ids = list(acc.get("ai_msg_ids") or [])
+                if mid:
+                    ids.append(mid)
+                acc["ai_msg_ids"] = ids
+                tab.round_undo = acc
+        if send_btn and resume_btn:
+            self._set_running_ui(send_btn, resume_btn, False, can_resume=True)
+
+    def _on_undo_round(self, tab) -> None:
+        """撤回最近一轮：备份盖回 Word / 挪回文件 / 删本轮产物 / 去掉本轮 AI 回应。"""
+        if tab is None:
+            return
+        if self._worker is not None and self._worker.isRunning():
+            QMessageBox.information(
+                self, "撤回本轮", "请先中止当前思考，再撤回。")
+            return
+        rec = getattr(tab, "round_undo", None) or empty_round()
+        if not has_undoable(rec):
+            QMessageBox.information(
+                self, "撤回本轮", "没有可撤回的本轮操作（或已撤回过）。")
+            return
+        oks, errs = apply_file_undos(rec)
+        for m in list(rec.get("moves") or []):
+            lid = m.get("log_id")
+            if lid:
+                try:
+                    db.mark_log_undone(int(lid))
+                except Exception:  # noqa: BLE001
+                    pass
+            # 同步右侧日志展示
+            self._mark_log_item_undone(lid)
+
+        channel_id = tab.property("channel_id")
+        n_msg = 0
+        if channel_id is not None:
+            n_msg = db.delete_messages_by_ids(
+                channel_id, list(rec.get("ai_msg_ids") or []))
+        self._reload_chat_from_db(tab)
+
+        rec["undone"] = True
+        tab.round_undo = rec
+        panel = tab.property("thinking_panel")
+        if panel is not None:
+            panel.set_undo_enabled(False)
+            panel.push("已撤回本轮")
+            panel.show()
+
+        summary = []
+        if oks:
+            summary.append("；".join(oks[:6]))
+        if n_msg:
+            if oks or rec.get("moves") or rec.get("word_restores"):
+                summary.append("已去掉本轮 %d 条 AI 回应" % n_msg)
+            else:
+                summary.append("本轮没有产生可撤回的文件，已去掉 %d 条 AI 回应" % n_msg)
+        if errs:
+            summary.append("部分失败：" + "；".join(errs[:4]))
+        msg = "撤回完成。" if not summary else ("撤回完成。" + " ".join(summary))
+        self.log("撤回本轮: %s" % msg)
+        chat = tab.property("chat_display")
+        if chat is not None:
+            self._append_bubble(chat, msg, "ai")
+            if channel_id is not None:
+                # 撤回说明本身不再记入可再撤账本
+                db.add_message(channel_id, "ai", msg)
+        if oks or any(rec.get("moves") or rec.get("word_restores")):
+            self.file_explorer.refresh()
+        self._bind_export_button(tab, None)
+
+    def _mark_log_item_undone(self, log_id) -> None:
+        if log_id is None:
+            return
+        try:
+            lid = int(log_id)
+        except (TypeError, ValueError):
+            return
+        for i in range(self.log_list.count()):
+            item = self.log_list.item(i)
+            if item is None:
+                continue
+            if item.data(Qt.ItemDataRole.UserRole + 1) == lid:
+                text = item.text() or ""
+                if "（已撤回）" not in text:
+                    item.setText(text + "（已撤回）")
+                item.setData(Qt.ItemDataRole.UserRole, None)
+                break
+
+    def _reload_chat_from_db(self, tab) -> None:
+        if tab is None:
+            return
+        chat = tab.property("chat_display")
+        channel_id = tab.property("channel_id")
+        if chat is None:
+            return
+        chat.clear()
+        if channel_id is None:
+            chat.setHtml(WELCOME_HTML)
+            return
+        rows = db.list_messages(channel_id)
+        if not rows:
+            chat.setHtml(WELCOME_HTML)
+            return
+        for sender, content in rows:
+            self._append_bubble(chat, content, sender)
+
+    # ------------------------------------------------------------------
+    # P2：对话附件（拖入 / 附加按钮 → file_paths；不猜意图）
+    # ------------------------------------------------------------------
+
+    def _set_input_drop_active(self, tab, active: bool) -> None:
+        """拖入时浅蓝底+虚线；平时不常驻大虚线框。"""
+        if tab is None:
+            return
+        card = tab.property("input_card")
+        if card is None:
+            return
+        want = bool(active)
+        if bool(card.property("dropActive")) == want:
+            return
+        card.setProperty("dropActive", want)
+        sty = card.style()
+        sty.unpolish(card)
+        sty.polish(card)
+        card.update()
+
+    def eventFilter(self, obj, event):
+        et = event.type()
+        if et in (QEvent.Type.DragEnter, QEvent.Type.DragMove):
+            md = event.mimeData()
+            if md and md.hasUrls():
+                if any(u.isLocalFile() for u in md.urls()):
+                    tab = self._tab_for_widget(obj)
+                    self._set_input_drop_active(tab, True)
+                    event.setDropAction(Qt.DropAction.CopyAction)
+                    event.acceptProposedAction()
+                    return True
+        if et == QEvent.Type.DragLeave:
+            tab = self._tab_for_widget(obj)
+            self._set_input_drop_active(tab, False)
+        if et == QEvent.Type.Drop:
+            md = event.mimeData()
+            tab = self._tab_for_widget(obj)
+            self._set_input_drop_active(tab, False)
+            if md and md.hasUrls():
+                if tab is not None:
+                    added = self._add_attachments(tab, paths_from_urls(md.urls()))
+                    if added:
+                        event.setDropAction(Qt.DropAction.CopyAction)
+                        event.acceptProposedAction()
+                        return True
+                    event.acceptProposedAction()
+                    return True
+        return super().eventFilter(obj, event)
+
+    def _tab_for_widget(self, w):
+        cur = w
+        while cur is not None:
+            try:
+                if self.chat_tabs.indexOf(cur) >= 0:
+                    return cur
+            except Exception:  # noqa: BLE001
+                break
+            cur = cur.parentWidget() if hasattr(cur, "parentWidget") else None
+        return self.chat_tabs.currentWidget()
+
+    def _add_attachments(self, tab, paths) -> list[str]:
+        """追加附件芯片；只收文件。返回新加入的路径。"""
+        if tab is None:
+            return []
+        cur = list(getattr(tab, "attach_paths", []) or [])
+        before = set(cur)
+        merged = paths_from_strings(cur + list(paths or []))
+        tab.attach_paths = merged
+        self._rebuild_attach_chips(tab)
+        return [p for p in merged if p not in before]
+
+    def _remove_attachment(self, tab, path: str) -> None:
+        if tab is None:
+            return
+        key = str(Path(path).resolve()) if path else ""
+        cur = []
+        for p in list(getattr(tab, "attach_paths", []) or []):
+            try:
+                if str(Path(p).resolve()) == key:
+                    continue
+            except OSError:
+                if p == path:
+                    continue
+            cur.append(p)
+        tab.attach_paths = cur
+        self._rebuild_attach_chips(tab)
+
+    def _clear_attachments(self, tab) -> None:
+        if tab is None:
+            return
+        tab.attach_paths = []
+        self._rebuild_attach_chips(tab)
+
+    def _pick_attachments(self, tab) -> None:
+        ws = str(tab.property("workspace_path") or "").strip() if tab else ""
+        start = ws if ws and Path(ws).is_dir() else str(get_desktop_path())
+        files, _ = QFileDialog.getOpenFileNames(
+            self, "附加到对话（精确指定文件）", start)
+        if files:
+            self._add_attachments(tab, files)
+
+    def _on_explorer_attach(self, paths) -> None:
+        """资源管理器右键「附加到当前对话」。"""
+        tab = self.chat_tabs.currentWidget()
+        if tab is None:
+            return
+        added = self._add_attachments(tab, paths)
+        if added:
+            self.log("已附加到对话：%s" % "、".join(Path(p).name for p in added[:5]))
+
+    def _rebuild_attach_chips(self, tab) -> None:
+        layout = tab.property("attach_chips_layout") if tab else None
+        if layout is None:
+            return
+        while layout.count():
+            item = layout.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+        for path in list(getattr(tab, "attach_paths", []) or []):
+            name = Path(path).name
+            chip = QPushButton(name + " ×")
+            chip.setObjectName("attachChip")
+            chip.setToolTip(path)
+            chip.setFixedHeight(26)
+            chip.setStyleSheet(
+                "QPushButton#attachChip { background:#475569; color:#f8fafc;"
+                " border:1px solid #334155; border-radius:12px;"
+                " padding:0 10px; font-size:12px; font-weight:600; }"
+                "QPushButton#attachChip:hover { background:#334155; color:#ffffff; }")
+            chip.clicked.connect(
+                lambda _=False, t=tab, p=path: self._remove_attachment(t, p))
+            layout.addWidget(chip)
+        layout.addStretch(1)
 
     def _bind_export_button(self, tab, export_path: str | None) -> None:
         """plan_ready 后显示「导出为 Excel」；点击用系统默认程序打开 xlsx。"""
@@ -528,51 +1233,88 @@ class MainWindow(QMainWindow):
                 resume: bool = False, confirmed: bool = False):
         """处理发送：交 AI 代理；dispatch 在后台线程跑，避免前端卡死。"""
         text = input_box.text().strip()
-        if not text and not (resume and self._last_task_text):
-            return
-        if resume and not text:
+        if not text and (resume or confirmed) and self._last_task_text:
             text = self._last_task_text
+        if not text:
+            return
         if self._worker is not None and self._worker.isRunning():
             self._append_bubble(chat_display, "上一条指令还在执行中，可点「结束」停止。", "ai")
             return
 
-        tab = chat_display.parentWidget()
+        tab = self._tab_for_widget(chat_display)
         if send_btn is None and tab is not None:
             send_btn = tab.property("send_btn")
         if resume_btn is None and tab is not None:
             resume_btn = tab.property("resume_btn")
 
-        if not resume:
-            self._append_bubble(chat_display, text, "user")
-            input_box.clear()
-            self.log(f"发送: {text}")
-        else:
-            self._append_bubble(chat_display, f"（重新/续跑）{text}", "user")
-            self.log(f"续跑: {text}")
-
         channel_id = tab.property("channel_id") if tab is not None else None
-        if channel_id is not None:
-            db.add_message(channel_id, "user", text if not resume else f"[续跑] {text}")
 
         def reply_ai(content):
             self._append_bubble(chat_display, content, "ai")
             if channel_id is not None:
-                db.add_message(channel_id, "ai", content)
+                mid = db.add_message(channel_id, "ai", content)
+                if tab is not None and mid:
+                    acc = getattr(tab, "round_undo", None) or empty_round()
+                    ids = list(acc.get("ai_msg_ids") or [])
+                    ids.append(mid)
+                    acc["ai_msg_ids"] = ids
+                    tab.round_undo = acc
 
-        target = self.file_explorer.current_path
-        if target is None:
-            if not self.ai_assistant.api_key:
-                reply_ai("当前在「此电脑」，请先进入一个具体目录；或配置 API Key 使用 AI。")
-                input_box.setFocus()
-                return
-            target = get_desktop_path()
-        if resume and self._last_task_target is not None:
-            target = self._last_task_target
-
-        if not config.get_api_key():
-            reply_ai("这条指令需要 AI 处理，但尚未配置 API Key（请在记忆纠错 Web「设置」Tab 配置）")
+        ws = str(tab.property("workspace_path") or "").strip() if tab is not None else ""
+        if not ws or not Path(ws).is_dir():
+            reply_ai("本频道还没有工作区。请先点「更换工作区」选一个文件夹。")
+            if tab is not None:
+                self._ensure_tab_workspace(tab, required=False)
             input_box.setFocus()
             return
+
+        # P3：文内文件名（仅工作区；多命中不猜——在清空输入前拦截）
+        named_hits: list[str] = []
+        named_missing: list[str] = []
+        if not resume and not self._pending_table_query:
+            resolved = resolve_names_in_workspace(ws, text)
+            if resolved.ambiguous:
+                reply_ai(format_ambiguous_message(resolved))
+                input_box.setFocus()
+                return
+            named_hits = list(resolved.hits or [])
+            named_missing = list(resolved.missing or [])
+
+        attach_now = list(getattr(tab, "attach_paths", []) or []) if tab is not None else []
+        # 附件 ∪ 文内唯一命中（附件优先顺序在 merge 里）
+        path_note_src = merge_file_paths(attach_now, named_hits)
+        attach_note = format_attach_note(path_note_src)
+        if not resume:
+            shown = text if not attach_note else (text + "\n" + attach_note)
+            self._append_bubble(chat_display, shown, "user")
+            input_box.clear()
+            extra = []
+            if attach_now:
+                extra.append("附件%d" % len(attach_now))
+            if named_hits:
+                extra.append("文内%d" % len(named_hits))
+            self.log(f"发送: {text}" + ((" +" + "+".join(extra)) if extra else ""))
+        else:
+            self._append_bubble(chat_display, f"（重新/续跑）{text}", "user")
+            self.log(f"续跑: {text}")
+
+        if channel_id is not None:
+            persist = text if not resume else f"[续跑] {text}"
+            if attach_note and not resume:
+                persist = persist + "\n" + attach_note
+            db.add_message(channel_id, "user", persist)
+
+        # 浏览进了子目录 → 用当前目录；否则用频道工作区根
+        target = self.file_explorer.current_path or ws
+        if not target or not Path(str(target)).is_dir():
+            # 没选目录时，按指令里的「桌面 / 下载」兜底（只认这两处，不猜别的）
+            inferred = self._infer_target_from_text(text)
+            if inferred:
+                target = inferred
+                if tab is not None:
+                    self._thinking_push(tab, "未选择目录，按指令使用：%s" % inferred)
+        if resume and self._last_task_target is not None:
+            target = self._last_task_target
 
         from agent_core.session_state import TaskControl
         control = TaskControl()
@@ -585,12 +1327,14 @@ class MainWindow(QMainWindow):
         input_box.setEnabled(False)
         if send_btn and resume_btn:
             self._set_running_ui(send_btn, resume_btn, True)
-        # 选中文件 → table_query file_paths；若上轮 needs_user 则带 ask_history 续跑
+        # 附件 → 文内唯一命中 → 资源管理器选中
         selected_paths = []
         try:
             selected_paths = list(self.file_explorer.get_selected_files() or [])
         except Exception:
             selected_paths = []
+        selected_paths = merge_file_paths(
+            merge_file_paths(attach_now, named_hits), selected_paths)
         ask_history = None
         pending = self._pending_table_query
         user_reply_text = text
@@ -608,14 +1352,30 @@ class MainWindow(QMainWindow):
             # 续问时仍用原 utterance 作为查询主体（不重新意图分发）
             text = str(pending.get("utterance") or text)
             self._last_task_text = text
-            reply_ai("⏳ 已收到确认，继续跨表查询…")
+            self._thinking_begin(tab, "已收到确认，继续跨表查询…")
             input_box.setPlaceholderText("跨表查询追问中，直接回复确认即可…")
         else:
             self._last_task_text = text
-            reply_ai("⏳ 处理中…（界面可继续浏览文件；可点黄色「结束」停止）")
+            soft = ""
+            if named_missing:
+                soft = (
+                    "（工作区未找到：%s —— 未锁定；可用「附加」）"
+                    % "、".join(named_missing[:5])
+                )
+            self._thinking_begin(tab, "解析意图…")
+            if soft:
+                self._thinking_push(tab, soft)
             input_box.setPlaceholderText("输入消息，回车发送...")
+        # 附件先保留：失败时用户可直接重发；成功/正常结束后由 on_done 清空
+        self._sent_attachments = (tab, list(attach_now)) if attach_now and tab is not None else None
         self._last_progress_msg = ""
-        self._set_tab_status(tab, "正在解析意图…")
+        self._start_run_timer(tab, "正在解析意图…")
+        # 新一轮开始：清空本轮撤回账本（上一轮已结束才可撤）
+        if tab is not None:
+            tab.round_undo = empty_round()
+            panel = tab.property("thinking_panel")
+            if panel is not None:
+                panel.set_undo_enabled(False)
 
         worker = _DispatchWorker(
             self.dispatcher, text, target, control=control,
@@ -629,92 +1389,137 @@ class MainWindow(QMainWindow):
             if not text_msg:
                 return
             self.log(f"进度: {text_msg}")
-            self._set_tab_status(tab, text_msg)
-            # 阶段变化时在对话区追加一条短气泡（避免同文刷屏）
+            if tab is not None:
+                tab.setProperty("run_base_status", text_msg)
+            self._refresh_run_status()
+            # 进度进思考过程面板，不再刷对话气泡
             if text_msg != self._last_progress_msg:
                 self._last_progress_msg = text_msg
-                # 只把关键节点上屏，细节留在状态条/日志
-                key = False
-                for needle in (
-                    "解析意图",
-                    "跨表查询",
-                    "QP",
-                    "QE",
-                    "已锁定",
-                    "需要你确认",
-                ):
-                    if needle in text_msg:
-                        key = True
-                        break
-                if key:
-                    self._append_bubble(chat_display, "→ " + text_msg, "ai")
+                self._thinking_push(tab, text_msg)
 
         def on_done(result):
             input_box.setEnabled(True)
-            self._set_tab_status(tab, "", visible=False)
+            if not isinstance(result, dict):
+                result = {
+                    "handler": "系统",
+                    "message": "内部错误：任务没有返回结果字典。",
+                    "operations": [],
+                }
             cancelled = bool(result.get("cancelled"))
             tool = str(result.get("tool") or "")
             status = str(result.get("status") or "")
-            if status == "needs_user" and tool == "table_query":
-                self._pending_table_query = {
-                    "utterance": self._last_task_text,
-                    "five_part": result.get("five_part"),
-                    "fail_locus": result.get("fail_locus"),
-                    "ask_history": result.get("ask_history") or [],
-                    "file_paths": result.get("file_paths") or selected_paths,
-                }
-                input_box.setPlaceholderText(
-                    "跨表查询需要确认：在此直接回复（不会重新分发意图）…"
-                )
-            elif tool == "table_query":
-                # plan_ready / failed / cancelled：结束追问态，恢复普通输入提示
-                self._pending_table_query = None
-                input_box.setPlaceholderText("输入消息，回车发送...")
-            else:
-                # 非查表链路也恢复默认占位（避免残留追问提示）
-                if not self._pending_table_query:
-                    input_box.setPlaceholderText("输入消息，回车发送...")
 
-            if result.get("handler") == "AI" and not self.ai_assistant.api_key:
-                reply_ai("这条指令需要 AI 处理，但尚未配置 API Key（请在记忆纠错 Web「设置」Tab 配置）")
-            elif tool == "table_query" and status == "plan_ready":
-                preview = result.get("result_preview") or {}
-                total = int(preview.get("total_rows") or 0)
-                export = result.get("export") if isinstance(result.get("export"), dict) else {}
-                export_path = str((export or {}).get("path") or "")
-                # 对话区摘要 + 导出按钮；完整预览仍用 dispatcher message
-                reply_ai(
-                    "查询完成，共 %s 行。点击下方「导出为 Excel」打开结果表。\n\n%s"
-                    % (total, result.get("message") or "")
-                )
-                self._bind_export_button(tab, export_path)
-                if export_path:
-                    self.log("跨表查询结果已导出: %s" % export_path)
-            elif tool == "word_office" and status == "needs_confirmation":
-                # ConfirmationOverlay：危险操作（delete/tracked_change）→ 弹窗确认
-                from PyQt6.QtWidgets import QMessageBox as _QMB
-                reply = _QMB.question(
-                    self, "确认执行",
-                    str(result.get("message") or "这是危险操作，确认执行？"),
-                    _QMB.StandardButton.Yes | _QMB.StandardButton.No,
-                )
-                if reply == _QMB.StandardButton.Yes:
-                    self.on_send(chat_display, input_box, send_btn, resume_btn,
-                                 confirmed=True)
+            # 本轮附件：失败/取消/待确认时保留，方便原样重发；其余情况清空
+            failed = cancelled or status in (
+                "failed", "error", "rollback_failed",
+                "compensation_failed", "failed_postcheck",
+            ) or str(result.get("reason") or "") == "model_unavailable"
+            sent = getattr(self, "_sent_attachments", None)
+            if (sent and sent[0] is tab and not failed
+                    and status != "needs_confirmation"):
+                self._clear_attachments(tab)
+                self._sent_attachments = None
+
+            # 先贴对话气泡，再停表/收尾——避免后段抛错时只见「完成」不见回复
+            try:
+                if status == "needs_user" and tool == "table_query":
+                    self._pending_table_query = {
+                        "utterance": self._last_task_text,
+                        "five_part": result.get("five_part"),
+                        "fail_locus": result.get("fail_locus"),
+                        "ask_history": result.get("ask_history") or [],
+                        "file_paths": result.get("file_paths") or selected_paths,
+                    }
+                    input_box.setPlaceholderText(
+                        "跨表查询需要确认：在此直接回复（不会重新分发意图）…"
+                    )
+                elif tool == "table_query":
+                    self._pending_table_query = None
+                    input_box.setPlaceholderText(INPUT_PLACEHOLDER)
                 else:
-                    reply_ai("已取消。")
-            elif tool == "table_query" and status in ("failed", "error", "cancelled"):
-                err = str(result.get("error") or result.get("message") or status)
-                reply_ai(
-                    "⚠️ 跨表查询失败（%s）：%s"
-                    % (result.get("fail_locus") or status, err)
-                )
-                self._bind_export_button(tab, None)
-                self.log("跨表查询失败: %s" % err[:200])
-            else:
-                reply_ai(f"[{result.get('handler') or 'AI代理'}] {result.get('message') or ''}")
-                if tool == "table_query":
+                    if not self._pending_table_query:
+                        input_box.setPlaceholderText(INPUT_PLACEHOLDER)
+
+                if result.get("handler") == "AI" and not config.get_api_key():
+                    reply_ai("这条需要聊天模型。A 级整理不需要 Key（如「按类型整理」）。"
+                             "查表 / 改 Word 请到「设置 → 聊天模型设置」。")
+                elif tool == "table_query" and status == "plan_ready":
+                    preview = result.get("result_preview") or {}
+                    total = int(preview.get("total_rows") or 0)
+                    export = result.get("export") if isinstance(result.get("export"), dict) else {}
+                    export_path = str((export or {}).get("path") or "")
+                    reply_ai(
+                        "查询完成，共 %s 行。点击下方「导出为 Excel」打开结果表。\n\n%s"
+                        % (total, result.get("message") or "")
+                    )
+                    self._bind_export_button(tab, export_path)
+                    if export_path:
+                        self.log("跨表查询结果已导出: %s" % export_path)
+                elif tool in ("word_office", "text_office") and status == "needs_confirmation":
+                    from PyQt6.QtWidgets import QMessageBox as _QMB
+                    reply = _QMB.question(
+                        self, "确认执行",
+                        str(result.get("message") or "这是危险操作，确认执行？"),
+                        _QMB.StandardButton.Yes | _QMB.StandardButton.No,
+                    )
+                    if reply == _QMB.StandardButton.Yes:
+                        self.on_send(chat_display, input_box, send_btn, resume_btn,
+                                     confirmed=True)
+                    else:
+                        reply_ai("已取消。")
+                elif tool in ("word_office", "text_office") and status in (
+                        "rollback_failed", "compensation_failed", "failed_postcheck"):
+                    prefix = {
+                        "rollback_failed": "⚠️ 回滚失败",
+                        "compensation_failed": "⚠️ 链式补偿失败",
+                        "failed_postcheck": "⚠️ 后置校验失败（已尝试还原）",
+                    }.get(status, "⚠️ 文件写入失败")
+                    reply_ai("%s：%s" % (prefix, result.get("message") or status))
+                    self.log("%s %s: %s" % (tool, status, (result.get("message") or "")[:200]))
+                elif tool == "table_query" and status in ("failed", "error", "cancelled"):
+                    err = str(result.get("error") or result.get("message") or status)
+                    reply_ai(
+                        "⚠️ 跨表查询失败（%s）：%s"
+                        % (result.get("fail_locus") or status, err)
+                    )
                     self._bind_export_button(tab, None)
+                    self.log("跨表查询失败: %s" % err[:200])
+                else:
+                    body = str(result.get("message") or "").strip() or "（无详细说明）"
+                    reply_ai("[%s] %s" % (result.get("handler") or "AI代理", body))
+                    if tool == "table_query":
+                        self._bind_export_button(tab, None)
+                    # 成稿族：跳到输出目录，避免「桌面已写、资源管理器仍停在别处」
+                    if tool in (
+                        "content_split", "structure_split", "template_fill",
+                    ):
+                        jump = str(
+                            result.get("output_dir")
+                            or result.get("work_dir")
+                            or ""
+                        ).strip()
+                        if jump and Path(jump).is_dir():
+                            try:
+                                self.file_explorer.load_directory(jump)
+                            except Exception:  # noqa: BLE001
+                                self.file_explorer.refresh()
+                        else:
+                            self.file_explorer.refresh()
+            except Exception as exc:  # noqa: BLE001
+                try:
+                    reply_ai("⚠️ 结果展示失败：%s" % exc)
+                except Exception:  # noqa: BLE001
+                    pass
+                self.log("on_done 展示异常: %s" % exc)
+
+            elapsed = self._stop_run_timer(tab, ok=not cancelled)
+            if elapsed > 0:
+                self.log("本轮用时 %d 秒" % elapsed)
+            if tab is not None:
+                self._thinking_push(
+                    tab,
+                    "已返回结果（%s）" % (result.get("reason") or tool or "done"),
+                )
 
             conflicts = result.get("instruction_conflicts") or []
             if conflicts and not cancelled:
@@ -752,11 +1557,31 @@ class MainWindow(QMainWindow):
                             pass
                     reply_ai(f"已按你的选择撤销导出（{removed} 个文件）。")
                     self.file_explorer.refresh()
+            log_ids = []
             for op in result.get("operations", []):
-                self.log(f"移动 {Path(op['src']).name} → {Path(op['dst']).parent.name}/",
-                         undo_info=op)
+                if isinstance(op, dict) and op.get("src") and op.get("dst"):
+                    lid = self.log(
+                        f"移动 {Path(op['src']).name} → {Path(op['dst']).parent.name}/",
+                        undo_info=op)
+                    log_ids.append(lid)
+                else:
+                    log_ids.append(None)
             if result.get("operations"):
                 self.file_explorer.refresh()
+            # 记下本轮可撤回项（Word 备份 / 移动 / 产物 + 已记下的 AI 气泡）
+            if tab is not None:
+                collected = collect_from_result(result, log_ids=log_ids)
+                base = getattr(tab, "round_undo", None) or empty_round()
+                merged = merge_rounds(base, collected)
+                # export 可能只在 UI 绑定路径里
+                ep = str(tab.property("export_path") or "").strip()
+                if ep and ep not in merged["extra_files"]:
+                    merged["extra_files"].append(ep)
+                tab.round_undo = merged
+                panel = tab.property("thinking_panel")
+                if panel is not None:
+                    panel.set_undo_enabled(has_undoable(merged))
+                    panel.show()
             if send_btn and resume_btn:
                 self._set_running_ui(send_btn, resume_btn, False, can_resume=cancelled)
             input_box.setFocus()
@@ -768,13 +1593,18 @@ class MainWindow(QMainWindow):
 
         def on_fail(err):
             input_box.setEnabled(True)
-            self._set_tab_status(tab, "", visible=False)
+            elapsed = self._stop_run_timer(tab, ok=False)
             # Worker 异常：清追问态、恢复占位、隐藏导出钮
             self._pending_table_query = None
             input_box.setPlaceholderText("输入消息，回车发送...")
             self._bind_export_button(tab, None)
             reply_ai(f"⚠️ 执行异常：{err}")
-            self.log("Worker 异常: %s" % err)
+            self.log("Worker 异常: %s（用时 %d 秒）" % (err, elapsed))
+            if tab is not None:
+                panel = tab.property("thinking_panel")
+                if panel is not None:
+                    panel.set_undo_enabled(has_undoable(getattr(tab, "round_undo", None)))
+                    panel.show()
             if send_btn and resume_btn:
                 self._set_running_ui(send_btn, resume_btn, False, can_resume=True)
             input_box.setFocus()
@@ -785,6 +1615,19 @@ class MainWindow(QMainWindow):
         worker.failed.connect(on_fail)
         worker.start()
 
+    @staticmethod
+    def _paint_log_item(item: QListWidgetItem, message: str, *, undone: bool = False) -> None:
+        """成功绿 / 失败红 / 撤回灰；普通默认色。"""
+        msg = str(message or "")
+        if undone or "已撤回" in msg:
+            item.setForeground(QBrush(QColor("#9aa0a6")))
+        elif any(k in msg for k in ("失败", "错误", "无法", "拒绝", "取消")):
+            item.setForeground(QBrush(QColor("#b42318")))
+        elif any(k in msg for k in ("完成", "成功", "已分类", "已移动", "已写入", "整理完成")):
+            item.setForeground(QBrush(QColor("#067647")))
+        else:
+            item.setForeground(QBrush(QColor("#4b5563")))
+
     def log(self, message, undo_info=None):
         """添加一条操作日志（同时写入 SQLite，重启后仍在）
 
@@ -793,49 +1636,101 @@ class MainWindow(QMainWindow):
             undo_info: 可选，dict，描述可撤销的操作。
                        目前支持 {"type": "move", "src": 原路径, "dst": 现路径}
         """
-        timestamp = datetime.now().strftime("%H:%M:%S")  # 当前时间，精确到秒
-        item = QListWidgetItem(f"[{timestamp}] {message}")  # 日志条目带时间前缀
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        item = QListWidgetItem(f"[{timestamp}] {message}")
         if undo_info:
-            item.setData(Qt.ItemDataRole.UserRole, undo_info)  # 把撤回所需数据藏进条目，右键菜单时取出
-        log_id = db.add_log(message, undo_info)  # 入库，拿到行 id
-        item.setData(Qt.ItemDataRole.UserRole + 1, log_id)  # 记下数据库 id，供撤回/删除同步
+            item.setData(Qt.ItemDataRole.UserRole, undo_info)
+        log_id = db.add_log(message, undo_info)
+        item.setData(Qt.ItemDataRole.UserRole + 1, log_id)
+        self._paint_log_item(item, message, undone=False)
         self.log_list.addItem(item)
-        self.log_list.scrollToBottom()  # 自动滚动到最新一条
+        self.log_list.scrollToBottom()
+        return log_id
 
     def _load_logs(self):
         """启动时从数据库恢复历史操作日志（含已撤回的，标注状态）"""
         import json as _json
         rows = db.list_logs()
         if not rows:
-            self.log_list.addItem("就绪（右键日志可撤回支持的操作）")
+            ready = QListWidgetItem("就绪（右键日志可撤回支持的操作）")
+            self._paint_log_item(ready, "就绪", undone=True)
+            self.log_list.addItem(ready)
             return
         for log_id, message, undo_info_json, undone, created in rows:
-            text = f"[{created[11:]}] {message}"  # created_at 的时间部分
+            text = f"[{created[11:]}] {message}"
             if undone:
-                text += "（已撤回）"  # 已撤回的记录保留展示
+                text += "（已撤回）"
             item = QListWidgetItem(text)
             item.setData(Qt.ItemDataRole.UserRole + 1, log_id)
-            # 只有"未撤回且带 undo_info"的条目才恢复撤回能力
             if undo_info_json and not undone:
                 item.setData(Qt.ItemDataRole.UserRole, _json.loads(undo_info_json))
+            self._paint_log_item(item, text, undone=bool(undone))
             self.log_list.addItem(item)
         self.log_list.scrollToBottom()
+
+    def _export_logs_docx(self) -> None:
+        """导出操作日志为 Word（复用 word_renderer）。"""
+        from export.word_renderer import render_report
+
+        lines = []
+        for i in range(self.log_list.count()):
+            it = self.log_list.item(i)
+            if it is None:
+                continue
+            lines.append(("p", it.text()))
+        if not lines:
+            QMessageBox.information(self, "导出日志", "当前没有可导出的日志。")
+            return
+        tab = self.chat_tabs.currentWidget()
+        ws = str(tab.property("workspace_path") or "").strip() if tab else ""
+        out_dir = Path(ws) if ws and Path(ws).is_dir() else get_desktop_path()
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        out = out_dir / f"操作日志_{stamp}.docx"
+        try:
+            path = render_report(out, "操作日志", lines)
+        except OSError as exc:
+            QMessageBox.warning(self, "导出失败", str(exc))
+            return
+        self.log(f"已导出操作日志 → {path}")
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
 
     # ------------------------------------------------------------------
     # 操作范围提示
     # ------------------------------------------------------------------
 
-    def _on_path_changed(self, path):
-        """文件管理器切换目录时，更新操作范围提示"""
-        if path == "此电脑":
-            # "此电脑"不是真实目录，无法执行整理，提示用户先进入具体目录
-            self.scope_label.setText("📂 当前位置：此电脑（请双击进入具体盘符或目录后，再进行整理操作）")
+    def _on_log_toggled(self, expanded: bool) -> None:
+        """折叠操作日志，把垂直空间让给资源管理器。"""
+        self.log_list.setVisible(expanded)
+        self._log_toggle_btn.setText(
+            "操作日志 ▾" if expanded else "操作日志 ▸（点击展开 · 撤回在这里）")
+        if expanded:
+            sizes = getattr(self, "_log_expanded_sizes", None) or [560, 140]
+            self.right_v_splitter.setSizes(sizes)
         else:
-            # 明确告知用户：整理将作用于当前目录
+            cur = self.right_v_splitter.sizes()
+            if len(cur) >= 2 and cur[1] > 48:
+                self._log_expanded_sizes = list(cur)
+            total = sum(self.right_v_splitter.sizes()) or 700
+            self.right_v_splitter.setSizes([max(total - 36, 100), 36])
+
+    def _on_path_changed(self, path):
+        """文件管理器切换目录时，更新操作范围提示（工作区仍以频道绑定为准）。"""
+        tab = self.chat_tabs.currentWidget()
+        ws = ""
+        if tab is not None:
+            ws = str(tab.property("workspace_path") or "").strip()
+        if path == "此电脑":
             self.scope_label.setText(
-                f"📂 当前操作范围：{path}\n"
-                f"整理功能将自动操作此目录内选中的文件。如需操作其他目录，请先浏览到目标位置，或在对话中说明。"
+                "📂 当前位置：此电脑。"
+                + ("本频道工作区：%s（可点资源管理器回到该目录）" % ws if ws else "请先为本频道选择工作区。")
             )
+        else:
+            tip = f"📂 浏览位置：{path}"
+            if ws:
+                tip += f"\n工作区根：{ws}（整理默认当前浏览目录；换范围请「更换工作区」或进入子目录）"
+            else:
+                tip += "\n请先为本频道选择工作区。"
+            self.scope_label.setText(tip)
 
     # ------------------------------------------------------------------
     # 帮助说明
@@ -843,58 +1738,7 @@ class MainWindow(QMainWindow):
 
     def _show_help(self):
         """弹出完整的使用说明对话框"""
-        help_text = (
-            "<h2>🗂️ FileMate 使用说明</h2>"
-            "<p><b>核心模式：</b>AI 全权代理。你只管说大白话，AI 先判断你是要"
-            "<b>执行</b>还是<b>咨询</b>、是<b>整理文件</b>还是<b>整理内容</b>，"
-            "执行类指令直接操作，咨询类才给方案。需要配置智谱 API Key。</p>"
-            "<hr>"
-            "<h3>📂 界面布局</h3>"
-            "<ul>"
-            "<li><b>左侧</b>：对话频道，可开多个。每个频道独立记录对话历史。</li>"
-            "<li><b>右侧上方</b>：文件管理器（类似资源管理器），对话操作的范围就是当前目录。</li>"
-            "<li><b>右侧下方</b>：操作日志。右键日志可撤回文件移动。</li>"
-            "<li><b>顶部黄色提示条</b>：当前操作范围（文件管理器浏览的目录）。</li>"
-            "</ul>"
-            "<hr>"
-            "<h3>💬 怎么对话</h3>"
-            "<p>在频道底部的输入框里打字，回车或点「发送」。</p>"
-            "<p><b>⚡ 执行模式（直接操作，不出方案）：</b></p>"
-            "<ul>"
-            "<li>把图书馆文件夹里的 PDF 整理到「文档」</li>"
-            "<li>文件名带「合同」的归档到合同类</li>"
-            "<li>把上周修改过的文件备份一下</li>"
-            "<li>整理这些文档，并整理这些文档的内容（文件+内容一次办完）</li>"
-            "<li>把这里的文档全部整理出报告</li>"
-            "</ul>"
-            "<p><b>🧠 内容整理（读内容不动文件，生成 Word 报告）：</b></p>"
-            "<ul>"
-            "<li>读一下这份文档，总结关键信息</li>"
-            "<li>把这几份文档的内容汇总一下</li>"
-            "<li>统计这两个 CSV 的数据并联查</li>"
-            "<li>总结一下这份合同的关键条款</li>"
-            "</ul>"
-            "<p style='color:#666'>内容整理会自动判别文档类型（技术/小说/教程/项目/合同/学术），"
-            "按类型分块抽取实体与事实，结果存入本地知识库并生成 Word 报告（当前目录 FileMate报告/ 下）。"
-            "失败自动重试，重试不成会降级为摘要并明确标注，绝不静默丢失。</p>"
-            "<p><b>📋 咨询模式（只给方案和预览，不动文件）：</b></p>"
-            "<ul>"
-            "<li>这些 PDF 怎么整理比较好？</li>"
-            "<li>生成报告将会涉及哪些文件？</li>"
-            "<li>能不能先给我一个分类方案，先别动</li>"
-            "</ul>"
-            "<p style='color:#666'>看到「📋 方案预览」后，直接说「执行」或改成执行语气即可立即操作。</p>"
-            "<hr>"
-            "<h3>🔧 基础操作</h3>"
-            "<ul>"
-            "<li>点击 <b>+</b> 新建对话频道。</li>"
-            "<li>在右侧文件管理器中选中文件，再点「🗂 整理」可按扩展名一键整理（本地按钮，不耗 AI）。</li>"
-            "<li>右下角日志右键 → 「撤回此操作」可撤销文件移动。</li>"
-            "<li>启动记忆纠错 Web 后，在「设置」Tab 配置聊天模型 API Key（AI 代理必需）。</li>"
-            "</ul>"
-            "<p style='color:#888; font-size:12px'>版本 0.2 | AI 的决策只在当前目录内生效，文件夹名经过安全校验；"
-            "整理只会移动文件或生成报告，不会删除原文件。</p>"
-        )
+        help_text = HELP_HTML
         # 用带滚动条的对话框替代 QMessageBox，内容再多也能上下滑动查看
         from PyQt6.QtWidgets import QDialog, QTextBrowser
 
@@ -914,227 +1758,14 @@ class MainWindow(QMainWindow):
     # 设置
     # ------------------------------------------------------------------
 
+    def _edit_local_web(self):
+        """设置 → 本地 Web：记忆纠错 + 跨表查询，主窗口一键启停/打开。"""
+        from ui.local_web_dialog import open_local_web_dialog
+        open_local_web_dialog(self)
+
     def _edit_memory_correction_web(self):
-        """
-        M4/M4.1：端口 + 一键启停（subprocess）+ 复制命令 + /healthz + 打开日志。
-        不侵入查询引擎 / A'/A/B/S；启停走 WebServiceManager，不用 QThread。
-        """
-        from urllib.request import urlopen
-
-        from web.memory_correction.port_settings import (
-            resolve_port,
-            save_gui_port,
-            startup_command,
-        )
-        from web.memory_correction.web_service_manager import (
-            ServiceStatus,
-            get_shared_manager,
-        )
-
-        mgr = get_shared_manager()
-        dialog = QDialog(self)
-        dialog.setWindowTitle("记忆纠错 Web 服务")
-        form = QFormLayout(dialog)
-
-        port_box = QSpinBox()
-        port_box.setRange(1, 65535)
-        port_box.setValue(int(resolve_port()))
-        form.addRow("端口（默认 8765）", port_box)
-
-        from pipeline.block_cross_table.memory_rag.merge_settings import (
-            resolve_maibot_data_dir,
-            save_maibot_data_dir,
-        )
-        from pipeline.block_cross_table.memory_rag.maibot_ro import (
-            discover_maibot_db_path,
-        )
-
-        maibot_row = QHBoxLayout()
-        maibot_dir_edit = QLineEdit()
-        maibot_dir_edit.setText(str(resolve_maibot_data_dir() or ""))
-        maibot_dir_edit.setPlaceholderText(
-            "请点击右侧按钮选择 MaiBot 的 data 目录…"
-        )
-        btn_browse_maibot = QPushButton("浏览…")
-        maibot_warn = QLabel("")
-        maibot_warn.setStyleSheet("color: #9b2226; font-weight: 600;")
-        maibot_warn.setWordWrap(True)
-
-        def _refresh_maibot_warn(path_text=None):
-            path = (
-                maibot_dir_edit.text().strip()
-                if path_text is None
-                else str(path_text or "").strip()
-            )
-            if not path:
-                maibot_warn.setText("")
-                return
-            if discover_maibot_db_path(path) is None:
-                maibot_warn.setText("未找到数据库文件")
-            else:
-                maibot_warn.setText("")
-
-        def _browse_maibot():
-            from PyQt6.QtWidgets import QFileDialog
-
-            chosen = QFileDialog.getExistingDirectory(
-                dialog,
-                "选择 MaiBot 数据目录（只读）",
-                maibot_dir_edit.text().strip() or "",
-            )
-            if not chosen:
-                return
-            maibot_dir_edit.setText(chosen)
-            save_maibot_data_dir(chosen)
-            _refresh_maibot_warn(chosen)
-
-        btn_browse_maibot.clicked.connect(_browse_maibot)
-        maibot_dir_edit.textChanged.connect(lambda _t: _refresh_maibot_warn())
-        maibot_row.addWidget(maibot_dir_edit)
-        maibot_row.addWidget(btn_browse_maibot)
-        form.addRow("MaiBot 数据目录", maibot_row)
-        form.addRow(maibot_warn)
-        _refresh_maibot_warn()
-
-        hint = QLabel(
-            "环境变量 MEMORY_CORRECTION_PORT 优先于本设置。"
-            "一键启动使用 subprocess 子进程；仅监听 127.0.0.1。"
-            "MaiBot 目录以 mode=ro 只读打开，严禁写入对方库。"
-            "完整模型/引擎设置见「设置 → 聊天模型设置 / 记忆·向量设置」。"
-        )
-        hint.setWordWrap(True)
-        form.addRow(hint)
-
-        status_label = QLabel("状态：%s" % mgr.status)
-        form.addRow(status_label)
-
-        btn_start = QPushButton("启动 Web 服务")
-        btn_stop = QPushButton("停止 Web 服务")
-        btn_log = QPushButton("打开日志")
-        btn_copy = QPushButton("复制启动命令")
-        btn_health = QPushButton("检查服务状态")
-        row = QHBoxLayout()
-        row.addWidget(btn_start)
-        row.addWidget(btn_stop)
-        row.addWidget(btn_log)
-        form.addRow(row)
-        row2 = QHBoxLayout()
-        row2.addWidget(btn_copy)
-        row2.addWidget(btn_health)
-        form.addRow(row2)
-
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
-        )
-        form.addRow(buttons)
-
-        poll_timer = QTimer(dialog)
-        poll_timer.setInterval(max(1, int(mgr.poll_interval_s * 1000)))
-        start_deadline = {"t": 0.0}
-
-        def _refresh_status():
-            status_label.setText("状态：%s" % mgr.status)
-
-        def _copy_cmd():
-            cmd = startup_command(int(port_box.value()))
-            QGuiApplication.clipboard().setText(cmd)
-            self.log("已复制启动命令（需 PYTHONPATH 含 web/）")
-
-        def _health():
-            port = int(port_box.value())
-            url = "http://127.0.0.1:%s/healthz" % port
-            try:
-                with urlopen(url, timeout=2) as resp:
-                    body = resp.read().decode("utf-8", "replace")
-                    ok = resp.status == 200 and "ok" in body
-                    status_label.setText(
-                        "状态：%s（healthz=%s）"
-                        % (mgr.status, "ok" if ok else "fail")
-                    )
-            except Exception as exc:
-                status_label.setText(
-                    "状态：%s（healthz fail: %s）" % (mgr.status, exc)
-                )
-
-        def _on_poll():
-            import time as _time
-
-            outcome = mgr.poll_ready_once()
-            if outcome is not None:
-                poll_timer.stop()
-                _refresh_status()
-                if outcome.ok:
-                    self.log("记忆纠错 Web 已启动（PID=%s）" % outcome.pid)
-                else:
-                    QMessageBox.warning(dialog, "启动失败", outcome.detail or mgr.status)
-                return
-            if _time.monotonic() >= start_deadline["t"]:
-                poll_timer.stop()
-                mgr.wait_until_ready(timeout_s=0)
-                _refresh_status()
-                QMessageBox.warning(
-                    dialog, "启动失败", "启动超时，查看日志"
-                )
-
-        def _start():
-            if mgr.is_running:
-                _refresh_status()
-                return
-            port = int(port_box.value())
-            save_gui_port(port)
-            outcome = mgr.start(port, wait_ready=False)
-            _refresh_status()
-            if not outcome.ok:
-                QMessageBox.warning(
-                    dialog, "启动失败", outcome.detail or mgr.status
-                )
-                return
-            if mgr.status_code == ServiceStatus.RUNNING:
-                self.log("记忆纠错 Web 已启动（PID=%s）" % mgr.pid)
-                return
-            import time as _time
-
-            start_deadline["t"] = _time.monotonic() + float(mgr.ready_timeout_s)
-            poll_timer.start()
-
-        def _stop():
-            poll_timer.stop()
-            outcome = mgr.stop()
-            _refresh_status()
-            if not outcome.ok:
-                QMessageBox.warning(dialog, "停止失败", outcome.detail or mgr.status)
-            else:
-                self.log("记忆纠错 Web 已停止")
-
-        def _open_log():
-            path = mgr.open_log_file()
-            QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.resolve())))
-
-        def _save():
-            save_gui_port(int(port_box.value()))
-            save_maibot_data_dir(maibot_dir_edit.text().strip())
-            QMessageBox.information(
-                dialog,
-                "已保存",
-                "端口与 MaiBot 数据目录已写入设置。"
-                "模型 / 自学习引擎请在 Web「设置」中配置。",
-            )
-            dialog.accept()
-
-        def _cleanup():
-            poll_timer.stop()
-
-        poll_timer.timeout.connect(_on_poll)
-        btn_start.clicked.connect(_start)
-        btn_stop.clicked.connect(_stop)
-        btn_log.clicked.connect(_open_log)
-        btn_copy.clicked.connect(_copy_cmd)
-        btn_health.clicked.connect(_health)
-        buttons.accepted.connect(_save)
-        buttons.rejected.connect(dialog.reject)
-        dialog.finished.connect(_cleanup)
-        _refresh_status()
-        dialog.exec()
+        """旧入口：并入「设置 → 本地 Web」，避免两套启停。"""
+        self._edit_local_web()
 
     def _open_web_settings_hint(self):
         """M5.2: model / MaiBot / self-learning live in Web Settings tab."""
@@ -1145,41 +1776,46 @@ class MainWindow(QMainWindow):
         QMessageBox.information(
             self,
             "已迁至 Web 设置",
-            "聊天模型、MaiBot 目录、自学习引擎与后台自动学习\n"
-            "请在记忆纠错 Web 的「设置」Tab 中配置。\n\n"
-            "先通过「设置 → 记忆纠错 Web 服务…」启动服务，再打开：\n%s" % url,
+            "聊天模型请用「设置 → 聊天模型设置」。\n"
+            "记忆纠错 / 跨表查询请用「设置 → 本地 Web」启动后再打开：\n%s" % url,
         )
 
     def closeEvent(self, event):
         """主程序关闭：若记忆纠错 Web 子进程仍在跑，询问是否停止。"""
         try:
-            from web.memory_correction.web_service_manager import get_shared_manager
+            from web.memory_correction.web_service_manager import (
+                get_query_ui_manager,
+                get_shared_manager,
+            )
 
-            mgr = get_shared_manager()
+            running = []
+            for name, mgr in (
+                ("记忆纠错", get_shared_manager()),
+                ("跨表查询", get_query_ui_manager()),
+            ):
+                if mgr.is_running:
+                    running.append((name, mgr))
         except Exception:
             super().closeEvent(event)
             return
 
-        if mgr.is_running:
-            pid = mgr.pid
+        if running:
+            pids = "、".join("%s PID=%s" % (n, m.pid) for n, m in running)
             box = QMessageBox(self)
             box.setIcon(QMessageBox.Icon.Question)
             box.setWindowTitle("Web 服务还在运行")
-            box.setText("Web 服务还在运行，是否停止")
-            box.setInformativeText("PID=%s" % pid)
+            box.setText("本地 Web 还在运行，是否停止")
+            box.setInformativeText(pids)
             box.setStandardButtons(
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
             )
             box.setDefaultButton(QMessageBox.StandardButton.Yes)
             ans = box.exec()
             if ans == QMessageBox.StandardButton.Yes:
-                mgr.stop()
+                for _n, mgr in running:
+                    mgr.stop()
             else:
-                QMessageBox.information(
-                    self,
-                    "保留进程",
-                    "进程 PID=%s，可手动停止" % pid,
-                )
+                QMessageBox.information(self, "保留进程", pids)
         super().closeEvent(event)
 
     def _edit_chat_model_settings(self):
@@ -1240,6 +1876,14 @@ class MainWindow(QMainWindow):
         if idx >= 0:
             provider_box.setCurrentIndex(idx)
         form.addRow("向量来源", provider_box)
+        from ai import embed as _embed
+        recall_hint = QLabel(
+            "Word 召回：FTS5 + LIKE + 向量"
+            if _embed.is_available()
+            else "Word 召回：仅 FTS5 + LIKE（未配置 api.embedding_key，无语义向量）"
+        )
+        recall_hint.setWordWrap(True)
+        form.addRow(recall_hint)
 
         local_edit = QLineEdit(
             str(config.get_param("memory_rag.embedded_model_path", "") or ""))
@@ -1361,30 +2005,61 @@ class MainWindow(QMainWindow):
         self.log("表格清洗设置已保存：清洗=%s，模型恢复=%s"
                  % ("开" if want_clean else "关", "开" if want_recover else "关"))
 
-    def _edit_api_key(self):
-        """弹出对话框设置智谱 API Key，保存到本地 config.json"""
-        key, ok = QInputDialog.getText(
-            self, "设置智谱 API Key",
-            "请输入智谱开放平台 API Key（留空则清除）:",
-            text=config.get_api_key()
+    def _cleanup_content_cache(self):
+        """设置菜单：清理内容分类 storage 孤儿索引（预览→确认，与聊天同强度）。"""
+        from pipeline.content_split import cleanup_orphan_indexes
+
+        preview = cleanup_orphan_indexes(dry_run=True) or {}
+        n = len(preview.get("removed") or [])
+        kept = len(preview.get("kept") or [])
+        deferred = len(preview.get("deferred") or [])
+        grace = int(preview.get("missing_root_grace_days") or 7)
+        defer_tip = (
+            f"\n另有 {deferred} 个暂不删（目录暂不可见未满 {grace} 天，或盘符断开）。"
+            if deferred
+            else ""
         )
-        if ok:
-            key = key.strip()
-            config.set_api_key(key)
-            self.ai_assistant.api_key = key
-            self.log("智谱 API Key 已更新" if key else "API Key 已清除")
-            if key:
-                from ai.client import test_connectivity
-                result = test_connectivity(key)
-                box = QMessageBox.information if result["ok"] else QMessageBox.warning
-                box(self, "智谱连通性", result["message"])
+        if n <= 0:
+            QMessageBox.information(
+                self,
+                "清理分类缓存",
+                f"没有可清理的孤儿索引（仍保留 {kept} 个有效）。"
+                f"{defer_tip}\n位置：{preview.get('state_root') or ''}",
+            )
+            return
+        reply = QMessageBox.question(
+            self,
+            "清理分类缓存",
+            f"将删除 {n} 个孤儿索引（id 已换，或 root 缺失且超过 {grace} 天），"
+            f"仍保留 {kept} 个有效。"
+            f"{defer_tip}\n不碰你的文档。确认清理？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        res = cleanup_orphan_indexes(dry_run=False) or {}
+        done = len(res.get("removed") or [])
+        self.log(
+            f"分类缓存清理：删除 {done} 个孤儿，保留 {len(res.get('kept') or [])}，"
+            f"暂缓 {len(res.get('deferred') or [])}"
+        )
+        QMessageBox.information(
+            self,
+            "清理分类缓存",
+            f"已清理 {done} 个孤儿索引。",
+        )
+
+    def _edit_api_key(self):
+        """兼容旧入口：转到聊天模型设置。"""
+        self._edit_chat_model_settings()
 
     def _test_api(self):
-        """菜单：测试智谱连通性"""
+        """菜单：测试当前配置的聊天模型连通性"""
         from ai.client import test_connectivity
         result = test_connectivity()
         box = QMessageBox.information if result["ok"] else QMessageBox.warning
-        box(self, "智谱连通性", result["message"])
+        box(self, "模型连通性", result["message"])
 
     def _edit_budget_params(self):
         """预算开销、单请求重试、疑问回复提示阈值（一律写 params，不写死）。"""
@@ -1493,31 +2168,25 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _on_organize(self, files):
-        """对文件管理器中选中的文件执行规则引擎整理"""
-        # 只处理文件，跳过文件夹
-        files = [f for f in files if Path(f).is_file()]
-        if not files:
+        """文件树「整理」：无口令，先 dry-run 预览再确认。聊天 A 级仍不弹窗。"""
+        plan = plan_moves(files)
+        if not plan.get("files"):
             self.log("整理: 未选中任何文件")
             return
-
-        engine = FileRuleEngine(".")  # 临时引擎（规则以文件自身所在目录为基准，base_dir 不参与目标拼接）
-        # 规则 1：按扩展名分类到 文档/图片/视频/音频/压缩包/程序
-        engine.add_rule(ExtensionRule({
-            '.pdf': '文档', '.doc': '文档', '.docx': '文档', '.txt': '文档',
-            '.jpg': '图片', '.jpeg': '图片', '.png': '图片', '.gif': '图片',
-            '.mp4': '视频', '.mov': '视频', '.avi': '视频',
-            '.mp3': '音频', '.wav': '音频',
-            '.zip': '压缩包', '.rar': '压缩包', '.7z': '压缩包',
-            '.exe': '程序', '.msi': '程序',
-        }))
-        # 规则 2：文件名含"合同"的归入 合同类/（优先级低于扩展名）
-        engine.add_rule(KeywordRule({'合同': '合同类'}))
-        # 规则 3：兜底——其余文件按修改时间归档到 年/月
-        engine.add_rule(DateRule("%Y/%m"))
-
-        result = engine.apply_rules(files)  # 执行整理，拿到移动/失败清单
-
-        # 每次移动记录一条带撤回信息的日志
+        text = preview_text(plan)
+        if not plan.get("moved"):
+            QMessageBox.information(self, "整理预览", text)
+            return
+        reply = QMessageBox.question(
+            self, "确认整理",
+            text,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            self.log("整理: 已取消")
+            return
+        result = apply_moves([str(p) for p in plan["files"]])
         for src, dst in result["moved"]:
             self.log(
                 f"移动 {Path(src).name} → {Path(dst).parent.name}/",
@@ -1525,9 +2194,8 @@ class MainWindow(QMainWindow):
             )
         for f, err in result["errors"]:
             self.log(f"失败 {Path(f).name}: {err}")
-
         self.log(f"整理完成: 成功 {len(result['moved'])} 个，失败 {len(result['errors'])} 个")
-        self.file_explorer.refresh()  # 刷新文件列表，让界面反映最新目录结构
+        self.file_explorer.refresh()
 
     # ------------------------------------------------------------------
     # 日志右键菜单与撤回
@@ -1588,7 +2256,7 @@ class MainWindow(QMainWindow):
             # 撤回成功：标记日志并清除撤销数据，防止重复撤回
             item.setText(item.text() + "（已撤回）")
             item.setData(Qt.ItemDataRole.UserRole, None)
-            # 数据库同步标记"已撤回"，但记录本身保留（重启后仍能看到这条日志）
+            self._paint_log_item(item, item.text(), undone=True)
             log_id = item.data(Qt.ItemDataRole.UserRole + 1)
             if log_id is not None:
                 db.mark_log_undone(log_id)

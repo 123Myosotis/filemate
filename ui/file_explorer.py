@@ -17,12 +17,48 @@ import shutil  # 查询磁盘用量（shutil.disk_usage）
 from pathlib import Path  # 跨平台路径对象
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QToolBar, QComboBox, QListView, QTreeView,  # 基础容器/工具栏/地址栏/两种视图
-    QStackedWidget, QLabel, QAbstractItemView, QMenu, QMessageBox, QInputDialog,  # 视图切换栈、状态栏、选择模式、菜单与弹窗
-    QSplitter, QTreeWidget, QTreeWidgetItem, QFileIconProvider  # 分栏、左侧导航树、系统图标提供者
+    QWidget, QVBoxLayout, QHBoxLayout, QToolBar, QComboBox, QListView, QTreeView,
+    QStackedWidget, QLabel, QAbstractItemView, QMenu, QMessageBox, QInputDialog,
+    QSplitter, QTreeWidget, QTreeWidgetItem, QFileIconProvider, QFrame, QToolButton,
+    QScrollArea, QSizePolicy,
 )
-from PyQt6.QtCore import Qt, QDir, QFileInfo, QSize, QUrl, pyqtSignal, QTimer  # Qt 常量、目录/文件信息、尺寸、URL、信号、定时器
-from PyQt6.QtGui import QStandardItemModel, QStandardItem, QIcon, QDesktopServices, QAction  # 数据模型、图标、系统默认打开、工具栏动作
+from PyQt6.QtCore import Qt, QDir, QFileInfo, QSize, QUrl, QMimeData, pyqtSignal, QTimer
+from PyQt6.QtGui import QStandardItemModel, QStandardItem, QIcon, QDesktopServices, QAction
+
+
+class _ExplorerItemModel(QStandardItemModel):
+    """支持拖出本地文件 URL，便于拖到对话区附加。"""
+
+    def mimeTypes(self):
+        return ["text/uri-list"]
+
+    def mimeData(self, indexes):
+        urls = []
+        seen = set()
+        for idx in indexes or []:
+            if idx.column() != 0:
+                continue
+            item = self.itemFromIndex(idx)
+            if item is None:
+                continue
+            path = item.data(Qt.ItemDataRole.UserRole + 1)
+            if not path:
+                continue
+            key = str(path)
+            if key in seen:
+                continue
+            seen.add(key)
+            urls.append(QUrl.fromLocalFile(key))
+        md = QMimeData()
+        if urls:
+            md.setUrls(urls)
+        return md
+
+    def flags(self, index):
+        f = super().flags(index)
+        if index.isValid() and index.column() == 0:
+            f |= Qt.ItemFlag.ItemIsDragEnabled
+        return f
 
 
 def get_desktop_path() -> Path:
@@ -51,9 +87,12 @@ class FileExplorer(QWidget):
     organize_requested = pyqtSignal(list)
     # 当前浏览目录变化时发出，携带新路径
     current_path_changed = pyqtSignal(str)
+    # 右键「附加到当前对话」→ 主窗口把文件塞进当前频道附件
+    attach_to_chat_requested = pyqtSignal(list)
 
     def __init__(self):
         super().__init__()
+        self.setObjectName("fileExplorer")  # 主题里压密度
 
         # 浏览历史记录与当前位置
         self.history = []  # 访问过的路径列表（用于后退/前进）
@@ -146,7 +185,7 @@ class FileExplorer(QWidget):
         # ========== 1. 工具栏 ==========
         toolbar = QToolBar()
         toolbar.setMovable(False)  # 禁止用户拖动工具栏位置
-        toolbar.setIconSize(QSize(18, 18))
+        toolbar.setIconSize(QSize(14, 14))
 
         self.back_btn = QAction("◀", self)  # 后退
         self.back_btn.triggered.connect(self.go_back)
@@ -164,80 +203,124 @@ class FileExplorer(QWidget):
         self.refresh_btn.triggered.connect(self.refresh)
         toolbar.addAction(self.refresh_btn)
 
-        # 地址栏
-        self.address_bar = QComboBox()  # 用 QComboBox 实现可编辑 + 下拉历史的地址栏
-        self.address_bar.setEditable(True)  # 允许直接输入路径
+        # 可编辑地址栏隐藏保留（程序跳转/粘贴路径）；界面主用面包屑
+        self.address_bar = QComboBox()
+        self.address_bar.setEditable(True)
         self.address_bar.setPlaceholderText("输入路径...")
-        self.address_bar.lineEdit().returnPressed.connect(self.navigate_to_address)  # 回车跳转
-        self.address_bar.currentIndexChanged.connect(self.on_address_selected)  # 从下拉历史选择跳转
-        toolbar.addWidget(self.address_bar)  # 地址栏占用工具栏剩余宽度
+        self.address_bar.lineEdit().returnPressed.connect(self.navigate_to_address)
+        self.address_bar.currentIndexChanged.connect(self.on_address_selected)
+        self.address_bar.hide()
 
-        # 视图模式切换
-        self.view_mode_btn = QAction("📋", self)  # 图标模式 ⇄ 列表模式
-        self.view_mode_btn.setCheckable(True)  # 可勾选状态，直观表示当前模式
+        path_edit_btn = QAction("路径…", self)
+        path_edit_btn.setToolTip("输入或粘贴完整路径跳转")
+        path_edit_btn.triggered.connect(self._prompt_path_jump)
+        toolbar.addAction(path_edit_btn)
+
+        # 视图：默认列表；可切网格
+        self.view_mode_btn = QAction("网格", self)
+        self.view_mode_btn.setCheckable(True)
+        self.view_mode_btn.setToolTip("切换网格 / 列表视图")
         self.view_mode_btn.triggered.connect(self.toggle_view_mode)
         toolbar.addAction(self.view_mode_btn)
 
-        # 整理选中文件（发出信号，由 MainWindow 执行规则引擎）
-        self.organize_btn = QAction("🗂 整理", self)
+        self.organize_btn = QAction("整理", self)
+        self.organize_btn.setToolTip("整理当前选中文件")
         self.organize_btn.triggered.connect(self._emit_organize)
         toolbar.addAction(self.organize_btn)
 
         layout.addWidget(toolbar)
 
+        # 面包屑：桌面 › 内容分类（点击回跳）
+        self.breadcrumb = QFrame()
+        self.breadcrumb.setObjectName("breadcrumbBar")
+        crumb_scroll = QScrollArea()
+        crumb_scroll.setWidgetResizable(True)
+        crumb_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        crumb_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        crumb_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        crumb_scroll.setFixedHeight(28)
+        crumb_host = QWidget()
+        self._crumb_layout = QHBoxLayout(crumb_host)
+        self._crumb_layout.setContentsMargins(2, 0, 2, 0)
+        self._crumb_layout.setSpacing(0)
+        self._crumb_layout.addStretch(1)
+        crumb_scroll.setWidget(crumb_host)
+        crumb_outer = QHBoxLayout(self.breadcrumb)
+        crumb_outer.setContentsMargins(0, 0, 0, 0)
+        crumb_outer.addWidget(crumb_scroll)
+        layout.addWidget(self.breadcrumb)
+
         # ========== 2. 左右分栏：左侧导航树 + 右侧文件列表 ==========
-        self.splitter = QSplitter(Qt.Orientation.Horizontal)  # 左右可拖动分栏
-        self.splitter.setHandleWidth(5)
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter.setHandleWidth(6)
+        self.splitter.setChildrenCollapsible(True)  # 导航树可收到最小
 
         # --- 左侧导航树（轻量自绘，避免触发系统图标缓存） ---
         self.nav_tree = QTreeWidget()
-        self.nav_tree.setHeaderHidden(True)  # 隐藏表头，只显示树
-        self.nav_tree.itemClicked.connect(self._on_nav_clicked)  # 点击节点 → 右侧加载对应目录
-        self._build_nav_tree()  # 填充"快速访问"和"此电脑"节点
+        self.nav_tree.setHeaderHidden(True)
+        self.nav_tree.setIndentation(12)
+        self.nav_tree.setMinimumWidth(72)
+        self.nav_tree.itemClicked.connect(self._on_nav_clicked)
+        self._build_nav_tree()
         self.splitter.addWidget(self.nav_tree)
 
         # --- 右侧：原有文件列表区域 ---
-        right_container = QWidget()  # 右半部分容器：文件视图 + 状态栏
+        right_container = QWidget()
         right_layout = QVBoxLayout(right_container)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(0)
-        self.list_view = QListView()  # 图标模式视图
-        self.list_view.setViewMode(QListView.ViewMode.IconMode)  # 大图标排列
-        self.list_view.setIconSize(QSize(48, 48))
-        self.list_view.setGridSize(QSize(95, 72))  # 每个格子的尺寸，保证文件名换行后仍对齐
-        self.list_view.setWordWrap(True)  # 长文件名自动换行
-        self.list_view.setSpacing(5)
-        self.list_view.setResizeMode(QListView.ResizeMode.Adjust)  # 窗口变宽时自动重排图标
-        self.list_view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)  # 支持 Ctrl/Shift 多选
-        self.list_view.doubleClicked.connect(self.on_file_double_click)  # 双击进入/打开
-        self.list_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)  # 启用自定义右键菜单
+        self.list_view = QListView()
+        self.list_view.setViewMode(QListView.ViewMode.IconMode)
+        self.list_view.setIconSize(QSize(24, 24))
+        self.list_view.setGridSize(QSize(72, 56))
+        self.list_view.setWordWrap(True)
+        self.list_view.setSpacing(2)
+        self.list_view.setResizeMode(QListView.ResizeMode.Adjust)
+        self.list_view.setUniformItemSizes(False)
+        self.list_view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.list_view.setDragEnabled(True)
+        self.list_view.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
+        self.list_view.setDefaultDropAction(Qt.DropAction.CopyAction)
+        self.list_view.setMouseTracking(True)
+        self.list_view.doubleClicked.connect(self.on_file_double_click)
+        self.list_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.list_view.customContextMenuRequested.connect(self.show_context_menu)
 
-        self.tree_view = QTreeView()  # 列表模式视图（带 名称/大小/类型/修改日期 列）
-        self.tree_view.setRootIsDecorated(False)  # 不显示树形展开箭头，纯平铺列表
-        self.tree_view.setAlternatingRowColors(True)  # 隔行变色，便于阅读
+        self.tree_view = QTreeView()
+        self.tree_view.setRootIsDecorated(False)
+        self.tree_view.setAlternatingRowColors(True)
+        self.tree_view.setIconSize(QSize(16, 16))
+        self.tree_view.setIndentation(0)
         self.tree_view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.tree_view.setDragEnabled(True)
+        self.tree_view.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
+        self.tree_view.setDefaultDropAction(Qt.DropAction.CopyAction)
+        self.tree_view.setMouseTracking(True)
         self.tree_view.doubleClicked.connect(self.on_file_double_click)
         self.tree_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree_view.customContextMenuRequested.connect(self.show_context_menu)
-        self.tree_view.hide()  # 默认图标模式，列表视图先隐藏
 
-        self.stacked_widget = QStackedWidget()  # 用栈容器管理两种视图，切 index 即切模式
-        self.stacked_widget.addWidget(self.list_view)   # index 0：图标模式
-        self.stacked_widget.addWidget(self.tree_view)   # index 1：列表模式
-        right_layout.addWidget(self.stacked_widget, 1)  # 视图区吃掉全部剩余高度
+        self.stacked_widget = QStackedWidget()
+        self.stacked_widget.addWidget(self.list_view)   # 0 = 网格
+        self.stacked_widget.addWidget(self.tree_view)   # 1 = 列表（默认）
+        self.stacked_widget.setCurrentIndex(1)
+        self.view_mode_btn.setChecked(False)
+        self.view_mode_btn.setText("网格")
+        self.view_mode_btn.setToolTip("当前：列表视图（点击切到网格）")
+        right_layout.addWidget(self.stacked_widget, 1)
 
         # ========== 3. 状态栏 ==========
-        self.status_label = QLabel()  # 显示"X 个文件夹，Y 个文件"
+        self.status_label = QLabel()
         right_layout.addWidget(self.status_label)
 
-        # 把右侧容器加入分割器，并设置左右比例
         self.splitter.addWidget(right_container)
-        self.splitter.setSizes([160, 600])  # 导航树 : 文件区 = 160 : 600
+        self.splitter.setStretchFactor(0, 0)
+        self.splitter.setStretchFactor(1, 1)
+        self.splitter.setSizes([110, 320])  # 导航更窄
         layout.addWidget(self.splitter, 1)
 
-        # ========== 4. 数据模型 ==========
-        self.model = QStandardItemModel()  # 两种视图共用同一份数据模型，切视图不用重新加载数据
+        # ========== 4. 数据模型（可拖出文件 URL）==========
+        self.model = _ExplorerItemModel()
         self.list_view.setModel(self.model)
         self.tree_view.setModel(self.model)
 
@@ -283,15 +366,16 @@ class FileExplorer(QWidget):
                     date_item = QStandardItem("")
                     self.model.appendRow([item, size_item, type_item, date_item])
                 else:
-                    # 图标模式：单列，容量信息放到悬浮提示里
-                    item.setToolTip(size_str)
+                    tip = f"{drive}\n{size_str}".strip() if size_str else drive
+                    item.setToolTip(tip)
                     self.model.appendRow(item)
 
                 drives.append(drive)
 
         self.status_label.setText(f"共 {len(drives)} 个驱动器")
-        self.current_path = None  # "此电脑"不是真实目录，置 None 表示不可作为整理范围
-        self.current_path_changed.emit("此电脑")  # 通知主窗口更新操作范围提示
+        self.current_path = None
+        self.current_path_changed.emit("此电脑")
+        self._rebuild_breadcrumb(None)
 
     def load_directory(self, path):
         """加载指定目录的内容并显示"""
@@ -343,22 +427,35 @@ class FileExplorer(QWidget):
                 else:
                     item.setData("file", Qt.ItemDataRole.UserRole)  # 标记类型：文件
 
-                item.setData(file_info.absoluteFilePath(), Qt.ItemDataRole.UserRole + 1)  # 存完整路径
+                abs_path = file_info.absoluteFilePath()
+                item.setData(abs_path, Qt.ItemDataRole.UserRole + 1)
+                # Tooltip：全路径 + 大小（网格截断时也能看全名）
+                if file_info.isDir():
+                    item.setToolTip(abs_path)
+                else:
+                    item.setToolTip(
+                        f"{abs_path}\n{self.format_size(file_info.size())}"
+                    )
 
                 if self.stacked_widget.currentIndex() == 1:
-                    # 列表模式：补齐 大小/类型/修改日期 三列
                     size_item = QStandardItem(self.format_size(file_info.size()))
-                    type_item = QStandardItem(file_info.suffix() if file_info.isFile() else "文件夹")
-                    date_item = QStandardItem(file_info.lastModified().toString("yyyy-MM-dd hh:mm"))
+                    type_item = QStandardItem(
+                        file_info.suffix() if file_info.isFile() else "文件夹"
+                    )
+                    date_item = QStandardItem(
+                        file_info.lastModified().toString("yyyy-MM-dd hh:mm")
+                    )
+                    size_item.setToolTip(item.toolTip())
                     self.model.appendRow([item, size_item, type_item, date_item])
                 else:
-                    self.model.appendRow(item)  # 图标模式只放单列
+                    self.model.appendRow(item)
 
-            file_count = sum(1 for info in entries if info.isFile())  # 统计文件数
-            dir_count = len(entries) - file_count  # 剩下的都是文件夹
+            file_count = sum(1 for info in entries if info.isFile())
+            dir_count = len(entries) - file_count
             self.status_label.setText(f"{dir_count} 个文件夹，{file_count} 个文件")
 
-            self.add_to_history(dir_path.absolutePath())  # 记入浏览历史，供后退/前进
+            self.add_to_history(dir_path.absolutePath())
+            self._rebuild_breadcrumb(dir_path.absolutePath())
 
         except PermissionError:
             QMessageBox.warning(self, "权限错误", f"没有权限访问: {path}")
@@ -421,10 +518,104 @@ class FileExplorer(QWidget):
         self.load_directory(self.address_bar.currentText())  # 重新加载当前目录
 
     def toggle_view_mode(self):
-        """切换图标/列表视图模式"""
+        """切换网格 / 列表。"""
         current_index = self.stacked_widget.currentIndex()
-        self.stacked_widget.setCurrentIndex(1 - current_index)  # 0/1 互换
-        self.load_directory(self.address_bar.currentText())  # 重新加载以补齐列表模式的列数据
+        nxt = 1 - current_index
+        self.stacked_widget.setCurrentIndex(nxt)
+        if nxt == 1:
+            self.view_mode_btn.setText("网格")
+            self.view_mode_btn.setChecked(False)
+            self.view_mode_btn.setToolTip("当前：列表视图（点击切到网格）")
+        else:
+            self.view_mode_btn.setText("列表")
+            self.view_mode_btn.setChecked(True)
+            self.view_mode_btn.setToolTip("当前：网格视图（点击切到列表）")
+        self.load_directory(self.address_bar.currentText())
+
+    def _prompt_path_jump(self) -> None:
+        cur = self.address_bar.currentText() or ""
+        text, ok = QInputDialog.getText(self, "跳转路径", "完整路径：", text=cur)
+        if ok and str(text).strip():
+            self.load_directory(str(text).strip())
+
+    def _clear_crumb_layout(self) -> None:
+        while self._crumb_layout.count():
+            item = self._crumb_layout.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+
+    def _rebuild_breadcrumb(self, path) -> None:
+        """压缩路径：桌面 › 内容分类；点击段可回跳。"""
+        self._clear_crumb_layout()
+        if not path or path == "此电脑":
+            lab = QLabel("此电脑")
+            lab.setObjectName("crumbSep")
+            self._crumb_layout.addWidget(lab)
+            self._crumb_layout.addStretch(1)
+            return
+
+        try:
+            p = Path(path).resolve()
+        except OSError:
+            p = Path(path)
+
+        desktop = get_desktop_path()
+        try:
+            desktop = desktop.resolve()
+        except OSError:
+            pass
+
+        segments = []  # (label, target_path_or_None)
+        try:
+            rel = p.relative_to(desktop)
+            segments.append(("桌面", str(desktop)))
+            acc = desktop
+            for part in rel.parts:
+                if part in (".",):
+                    continue
+                acc = acc / part
+                segments.append((part, str(acc)))
+        except ValueError:
+            parts = p.parts
+            if not parts:
+                segments.append((str(p), str(p)))
+            else:
+                # Windows: ('C:\\', 'Users', ...)
+                acc = Path(parts[0])
+                label0 = parts[0].rstrip("\\/") or parts[0]
+                segments.append((label0, str(acc)))
+                for part in parts[1:]:
+                    acc = acc / part
+                    segments.append((part, str(acc)))
+
+        # 过长时只留首尾几段
+        if len(segments) > 5:
+            head = segments[:2]
+            tail = segments[-3:]
+            segments = head + [("…", None)] + tail
+
+        for i, (label, target) in enumerate(segments):
+            if i > 0:
+                sep = QLabel("›")
+                sep.setObjectName("crumbSep")
+                self._crumb_layout.addWidget(sep)
+            if target is None:
+                dots = QLabel(label)
+                dots.setObjectName("crumbSep")
+                self._crumb_layout.addWidget(dots)
+                continue
+            btn = QToolButton()
+            btn.setObjectName("crumbBtn")
+            btn.setText(label)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setToolTip(target)
+            btn.setAutoRaise(True)
+            btn.clicked.connect(
+                lambda _checked=False, t=target: self.load_directory(t)
+            )
+            self._crumb_layout.addWidget(btn)
+        self._crumb_layout.addStretch(1)
 
     def add_to_history(self, path):
         """添加路径到浏览历史（后退后去新地方会截断后面的历史）"""
@@ -453,6 +644,19 @@ class FileExplorer(QWidget):
         else:
             QDesktopServices.openUrl(QUrl.fromLocalFile(full_path))  # 文件：交给系统默认程序打开
 
+    def _emit_attach_to_chat(self, selected_items):
+        """只附加文件（目录忽略）；主窗口负责芯片与 file_paths。"""
+        paths = []
+        for item in selected_items or []:
+            full_path = item.data(Qt.ItemDataRole.UserRole + 1)
+            if not full_path:
+                continue
+            info = QFileInfo(str(full_path))
+            if info.isFile():
+                paths.append(info.absoluteFilePath())
+        if paths:
+            self.attach_to_chat_requested.emit(paths)
+
     def show_context_menu(self, pos):
         """右键菜单：有选中项和点空白处显示不同内容"""
         menu = QMenu(self)
@@ -475,6 +679,10 @@ class FileExplorer(QWidget):
         if selected_items:
             open_action = menu.addAction("打开")
             open_action.triggered.connect(lambda: self.open_selected(selected_items))
+
+            attach_action = menu.addAction("附加到当前对话")
+            attach_action.triggered.connect(
+                lambda: self._emit_attach_to_chat(selected_items))
 
             if len(selected_items) == 1:
                 rename_action = menu.addAction("重命名")  # 重命名只对单个选中项开放

@@ -43,6 +43,21 @@ def test_tracked_beats_replace():
 def test_plain_replace():
     from pipeline.word_office.module import _plan_ops
     assert _plan_ops("把 A 改成 B")[0]["op"] == "find_replace"
+    assert _plan_ops("把 A 改成 B")[0]["find"] == "A"
+
+
+def test_natural_replace_strips_doc_wrapper():
+    """「这份文档里的「A型机」全部替换成「C型机」」→ find=A型机，不吞外壳。"""
+    from pipeline.word_office.module import _plan_ops
+    for utter in (
+        "把这份文档里的「A型机」全部替换成「C型机」",
+        "把 这份文档里的 「A型机」 全部 替换成「C型机」",
+        "把 这份文档里的 「A型机」 全部 替换成 「C型机」",
+    ):
+        ops = _plan_ops(utter)
+        assert ops[0]["op"] == "find_replace", utter
+        assert ops[0]["find"] == "A型机", utter
+        assert ops[0]["replace"] == "C型机", utter
 
 
 def test_insert_delete():
