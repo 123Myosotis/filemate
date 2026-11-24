@@ -1,0 +1,22 @@
+{
+  "ts": "2026-11-24T19:58:18",
+  "user_input": "把 A型机 替换成 C型机",
+  "tier": "A",
+  "file": {
+    "path": "docs/images/demo_after.docx",
+    "structure_sha256": "75905436bf5766a78283e1a91cb13825452414ac7973f35cfb7a3202d3f421b9"
+  },
+  "ops": 1,
+  "before": {
+    "paragraphs": 3,
+    "tables": [
+      {
+        "rows": 2,
+        "cols": 2,
+        "merged": 0
+      }
+    ]
+  },
+  "status": "done",
+  "reason": "find_replace"
+}

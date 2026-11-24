@@ -7,6 +7,64 @@
 
 ---
 
+## 演示
+
+同一条指令 `把 A型机 替换成 C型机`，在真实 `.docx` 上执行（**不是示意图，是本仓库代码跑出来的**）：
+
+| 改前 | 改后 |
+|---|---|
+| ![改前](docs/images/demo_before.png) | ![改后](docs/images/demo_after.png) |
+
+- 只改目标文字，**前后文格式保留**（"甲方是" 仍加粗、"乙方是B型机" 不变）
+- 段落 + 表格单元格 **2 处**命中（`applied: 2`）
+- 写前备份，执行后落证据（`storage/evidence/`，gzip、脱敏）：
+
+```json
+{
+  "user_input": "把 A型机 替换成 C型机",
+  "tier": "A",
+  "ops": 1,
+  "before": { "paragraphs": 3, "tables": [{ "rows": 2, "cols": 2, "merged": 0 }] },
+  "status": "done",
+  "reason": "find_replace"
+}
+```
+
+> 复现：`python docs/demo/make_demo.py`（素材在 `docs/images/`）。
+
+## 架构一览
+
+```mermaid
+flowchart TD
+    A[用户输入 + 选中文件] --> B[PyQt6 界面]
+    B --> C[engine/dispatcher 分发]
+    C -->|本地规则命中| D[确定性执行 0 token]
+    C -->|需要理解| E[agent_core/intent_router 选 tool]
+    E --> F[word_office]
+    E --> G[text_office]
+    E --> H[table_query 跨表]
+    E --> I[file_organize]
+    E --> J[chat / 内容整理]
+    F --> K[契约门禁 + ToolRegistry 预检]
+    G --> K
+    K --> L[写前快照]
+    L --> M[执行]
+    M --> N[写后校验]
+    N -->|失败| O[整包回滚]
+    N -->|成功| P[证据 + 记忆]
+    H --> P
+    I --> P
+    P --> Q[结果 / 导出 / 撤回]
+```
+
+三条主线：
+
+- **契约驱动**：算子 / 白名单 / 规则以 `contracts/versions/*.json` 为准，`authority_scan` 扫代码漂移。
+- **安全写入**：写前快照 → 执行 → 写后校验 → 失败整包回滚；证据只落本地（gzip、脱敏）。
+- **多格式管线**：`office_core` 抽公共流程（扫描/计划/门禁/快照/校验/证据），各格式只写适配器。
+
+---
+
 ## 功能
 
 ### Excel / 表格
