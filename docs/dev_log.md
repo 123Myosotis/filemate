@@ -2119,3 +2119,37 @@ P0 曾诚实降级；现已由上条 P1 替代执行路径。
 | 违背初衷 | 否——用的是项目自身代码产出，未造假 |
 | 偏离架构 | 否——复现脚本放 `docs/demo/`，不污染产品代码 |
 | 技术利弊 | 利：README 有了可点开的证据；弊：图片是渲染件，Word 原生排版可能略有差异（已用 LibreOffice） |
+
+---
+
+## 2026-11-24 README 配图复查（用户"再检查一下"）
+
+### 复查结果
+| 项 | 结论 |
+|---|---|
+| README 结构 | ✅ 14 个代码围栏（配对）、标题顺序正确（演示 → 架构一览 → 功能 …） |
+| 图片 | ✅ 2 个 PNG 头合法（`89 50 4E 47`）、已入库、README 引用可解析 |
+| 可复现 | ✅ 实跑 `docs/demo/make_demo.py`：`status=done`、`applied=2`；跑完已还原 `evidence_sample.json`，工作树干净 |
+| 绝对路径泄漏 | 🔴→✅ 发现 1 处并修复 |
+| 并发提交 | 用户在本轮期间自行提交 `57b9ef0`（`.dockerignore` + 测试修复），内容正确 |
+
+### 修复
+- **删除 `ui/main_window`**（无后缀、2026-10-15 的过期 UI 笔记，含 `C:\Users\12221\PycharmProjects\filemate`）；commit `0ca8cda`（-74 行）。
+- 复查 `git grep -e PycharmProjects -e 12221` → **0 命中**。
+
+### 知识
+- `.dockerignore` 已排除 `config.json` / `.env*` / `resume_raw.txt` / `notes_raw.txt` / `张敬轩-简历*` → **镜像不会带密钥与个人材料**（用户自己补的，方向正确）。
+- `.dockerignore` 也排除 `docs`，故容器内无 README 图——符合预期（图只服务 GitHub）。
+- `*.docx` 在 `.gitignore` 中 → demo docx 不入库，由脚本生成。
+
+### 仍未验证（环境限制，需用户本机）
+- `git push`（沙箱禁止 SSH 命名管道）
+- `pytest` 全绿（沙箱对 tempfile 目录拒绝访问）
+- 仓库是否 public
+
+### 自审
+| 项 | 结论 |
+|---|---|
+| 违背初衷 | 否——删除的是过期笔记，不影响产品代码 |
+| 偏离架构 | 否——`ui/main_window` 无 `.py` 后缀，不被任何代码导入 |
+| 技术利弊 | 利：去掉个人路径泄漏与误导性文件；弊：若该笔记有保留价值，需从 git 历史取回（`git show 5c1b00d:ui/main_window`） |
