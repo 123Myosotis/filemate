@@ -164,6 +164,9 @@ docker compose up --build
 pytest tests/ -q
 ```
 
+> 本仓库共 **1019** 个用例（Excel / Word / 契约 / 任务链）；本机实测 **1003 passed / 16 skipped**，
+> 跳过的是 `tests/live/`（需真实模型与桌面环境）。
+
 > 沙箱环境里 `tmp_path` 可能被拒（`PermissionError`），属**环境限制**，不是代码失败。
 
 ## 目录结构
